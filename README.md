@@ -573,8 +573,7 @@ stalls indefinitely on large downloads (`pip` hung for 25 minutes on the torch w
 URLs.
 
 The CI workflow in `.github/workflows/tests.yml` runs ruff and the CPU suite against CPU
-torch. Its steps were replayed on a fresh clone under Linux (WSL): ruff clean, 167
-passed, 2 GPU-only tests deselected. It has not yet run on GitHub.
+torch on every push: ruff clean, 167 passed, 2 GPU-only tests deselected.
 
 ---
 

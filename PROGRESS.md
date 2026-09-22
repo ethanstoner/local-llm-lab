@@ -368,7 +368,8 @@ powershell -ExecutionPolicy Bypass -File .\scripts\setup_env.ps1
 powershell -ExecutionPolicy Bypass -File .\scriptsetch_model.ps1 -Repo Qwen/Qwen2.5-7B-Instruct
 powershell -ExecutionPolicy Bypass -File .\scriptsetch_datasets.ps1
 .env\Scripts\python.exe -m pytest tests/ -q          # 119 passed
-powershell -ExecutionPolicy Bypass -File .\scriptsun_all.ps1
+powershell -ExecutionPolicy Bypass -File .\scripts
+un_all.ps1
 ```
 
 Built: a config-driven experiment harness with NVML telemetry, a precision-aware loader
@@ -564,7 +565,7 @@ layer 14's completions score judge NLL 2.5-2.7 - degraded output. Sufficiency re
 ```
 
 CI replay (WSL, fresh clone, CPU torch 2.6.0): ruff clean, 167 passed, 2 GPU tests
-deselected. The workflow itself has not run on GitHub; there is no remote.
+deselected. First GitHub Actions run (private repo, 2026-09-22): same result, 1m12s.
 
 ### Next steps
 
@@ -576,4 +577,4 @@ deselected. The workflow itself has not run on GitHub; there is no remote.
 3. **Remove the DynamicCache `torch.cat`** with a preallocated cache - the grouped
    traffic model charges it two extra passes over the cache per step.
 4. **A second architecture family**, if a licence can be accepted interactively.
-5. **Push and let CI run** - pending the owner's decision to publish.
+5. **Decide on public release** - the repo is private on GitHub with CI passing.
