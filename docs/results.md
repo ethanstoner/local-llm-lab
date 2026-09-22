@@ -84,8 +84,9 @@ and a separately timed prefill pass agree to within about 1% from 2k to 16k toke
 **On Windows, running out of VRAM does not fail - it slows down 20-60x.** fp32
 needs 29 GB on a 24 GB card. It loaded and ran at 2.2 tok/s, and at a 2048-token prompt
 0.67 tok/s with a 36-second time to first token. A harness that trusted the absence of
-an exception would have published that as fp32's speed. Every comparison here now flags
-cells that reach 97% of device memory rather than reporting them (the Phase 1-2 runs
+an exception would have published that as fp32's speed. Both benchmark harnesses now flag
+cells that reach 97% of device memory, when GPU telemetry is on (the default), rather
+than reporting them (the Phase 1-2 runs
 predate that check; the fp32 rows are identified as paging from their telemetry).
 
 **Fidelity** against bf16 - 1088 teacher-forced positions, 32 prompts, 64-token greedy
@@ -303,7 +304,8 @@ Harmful prompts, 80 per condition:
 With the direction removed the model complies, and coherently: completions keep the
 baseline's distinct-token ratio (0.92 against 0.93), and the independent judge scores
 them at 1.1-1.4 nats per token across layers 14-19 - above the 0.7-0.9 of the model's
-ordinary answers, far below the 2.2-2.7 of degenerate output. Harmful completions are scored
+ordinary answers, far below the 2.3-2.7 of the degenerate layer-27 addition output *(diagnostic: the
+superseded run)*. Harmful completions are scored
 and discarded; none is stored.
 
 ![necessity and sufficiency](../figures/intervention_overview.png)
@@ -317,7 +319,9 @@ removes refusal almost completely, although separation there is still rising (d 
 2.0-3.5). Among the best-separating layers (20-27, d = 3.6-3.8), the picture is mixed:
 at layers 21-24 ablation leaves 30-65% of refusals in place and costs 26-36%
 perplexity, while layer 27 removes most refusal (5%, +3.3%). Layer 16 - *d* = 2.2, well
-short of the peak - leaves only 2.5% of refusals with **no perplexity change**. Layer 0 is weakly separable
+short of the peak - leaves only 2.5% of refusals with **no perplexity change**, although
+its benign-prompt next-token KL (0.35 nats) is well above the random controls'
+(0.005-0.018): the ablation is not invisible, just cheap on the corpus. Layer 0 is weakly separable
 (*d* = 0.62) and ablating it does nothing at all. How well a probe reads a feature is
 not how much the model relies on it.
 
@@ -351,13 +355,13 @@ and 16 pass all three; **layer 14** wins, with 0/30 refusals under ablation.
 
 On the bundled prompts, which played no part in the choice, layer 14 holds up:
 
-| layer 14 | harmful refusal | harmless refusal | distinct-token ratio (harmful / harmless) |
-|---|---|---|---|
-| intact | 49/50 | 0/50 | 0.94 |
-| direction ablated | **0/50** | 0/50 | 0.92 |
-| direction added x1.5 | - | 38/50 | 0.93 |
-| direction added x2 | - | 48/50 | 0.93 |
-| random vector added, x1 norm (3 seeds) | - | 0/50, 0/50, 0/50 | 0.89 |
+| layer 14 | harmful refusal | harmless refusal | distinct-token ratio, harmful | distinct-token ratio, harmless |
+|---|---|---|---|---|
+| intact | 49/50 | 0/50 | 0.94 | 0.88 |
+| direction ablated | **0/50** | 0/50 | 0.92 | 0.88 |
+| direction added x1.5 | - | 38/50 | - | 0.93 |
+| direction added x2 | - | 48/50 | - | 0.93 |
+| random vector added, x1 norm (3 seeds) | - | 0/50, 0/50, 0/50 | - | 0.88-0.89 |
 
 Pooled over both prompt sets, adding layer 14's direction takes harmless-prompt refusal
 from 3% to 29% (x1), 83% (x1.5) and 98% (x2), with the completions staying fluent - more
@@ -470,7 +474,7 @@ logits. Details in [`PROGRESS.md`](../PROGRESS.md).
   still carry the machine's background load, which is why Phase 1 and Phase 7 differ by a
   few percent for the same configuration.
 * **`transformers.generate`, not a serving stack.** At batch 1, launch overhead holds
-  the bf16 and fp16 configurations to 68-80% of their bandwidth roofline (quantized
+  the old bf16/fp16 path to 68-80% of its bandwidth roofline and the new path to 62-75% (quantized
   modes sit far lower, limited by dequantisation); CUDA graphs or a compiled
   runtime would narrow that, and vLLM or TensorRT-LLM would be faster outright. The
   decode path in §4 is a fix for this stack on this platform. On a build with flash
