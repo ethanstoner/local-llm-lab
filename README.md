@@ -74,6 +74,7 @@ src/
 ├── interpretability/ activation hooks, statistics, refusal-direction analysis, CLI
 └── visualization/    figure functions, render CLI
 configs/              one YAML per experiment
+scripts/              environment setup, model and dataset fetchers, run-all
 results/              one self-contained directory per run
 figures/              rendered PNGs
 tests/                119 tests, CPU-only and network-free
@@ -182,24 +183,39 @@ powershell -ExecutionPolicy Bypass -File .\scripts\setup_env.ps1
 # 2. Tests - CPU only, no network, no model download
 .\venv\Scripts\python.exe -m pytest tests/ -q
 
-# 3. Smoke test on the 1.5B model (~2.9 GB download, under a minute)
+# 3. Weights and prompt sets. The configs point at local directories through
+#    model.local_path, so this must run before any experiment.
+#    ~17 GB of weights, ~44 KB of prompts.
+powershell -ExecutionPolicy Bypass -File .\scripts\fetch_model.ps1 -Repo Qwen/Qwen2.5-7B-Instruct
+powershell -ExecutionPolicy Bypass -File .\scripts\fetch_model.ps1 -Repo Qwen/Qwen2.5-1.5B-Instruct
+powershell -ExecutionPolicy Bypass -File .\scripts\fetch_datasets.ps1
+
+# 4. Smoke test on the 1.5B model (under a minute)
 .\venv\Scripts\python.exe -m src.benchmarks.run --config configs/smoke.yaml
 
-# 4. Phase 1 - context-length sweep on the 7B model
+# 5. Phase 1 - context-length sweep on the 7B model
 .\venv\Scripts\python.exe -m src.benchmarks.run --config configs/qwen2.5-7b.yaml
 
-# 5. Phase 2 - precision sweep, then quality comparison
+# 6. Phase 2 - precision sweep, then quality comparison
 .\venv\Scripts\python.exe -m src.benchmarks.run --config configs/precision_sweep.yaml
 .\venv\Scripts\python.exe -m src.evaluation.run  --config configs/precision_sweep.yaml
 
-# 6. Phases 4 and 5 - activation capture and refusal-direction analysis
+# 7. Phases 4 and 5 - activation capture and refusal-direction analysis
 .\venv\Scripts\python.exe -m src.interpretability.run --config configs/refusal.yaml
 
-# 7. Figures, from whatever runs exist
+# 8. Figures, from whatever runs exist
 .\venv\Scripts\python.exe -m src.visualization.render
 ```
 
-`scripts/run_all.ps1` runs steps 3-7 in order.
+`scripts/run_all.ps1` runs steps 4-8 in order, once steps 1-3 have been done.
+
+The weights are fetched by a PowerShell script rather than by `huggingface_hub` because
+on this machine Python's HTTP stack stalls indefinitely on large streaming downloads:
+`pip` hung for 25 minutes on the torch wheel with zero bytes transferred, and
+`snapshot_download` hung at 608 MB of 3.1 GB, with and without `hf_xet`. A .NET
+`HttpWebRequest` sustains 8-13 MB/s against the same URLs, so the transfer is done there
+with explicit ranged resume. `model.id` is still what run metadata records, and each
+model directory carries a `_fetch_metadata.json` with the resolved commit.
 
 Experiments are described entirely by their config file. To change the grid, edit the
 YAML; unknown keys and impossible values are rejected at parse time rather than forty
