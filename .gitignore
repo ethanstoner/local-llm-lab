@@ -1,0 +1,25 @@
+# Environment
+venv/
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ipynb_checkpoints/
+
+# Captured activation tensors are large and regenerable from the configs.
+# The small JSON/CSV metrics and the figures ARE tracked - they are the research output.
+results/**/activations/
+*.safetensors
+*.pt
+*.npy
+
+# Model weights never live in the repo
+models/
+*.gguf
+*.bin
+
+# Local secrets
+.env
+.env.*
+!.env.example
