@@ -18,8 +18,10 @@ Reference:
 
 from __future__ import annotations
 
+import csv
 import random
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 from src.utils.io import repo_root
@@ -29,6 +31,7 @@ logger = get_logger(__name__)
 
 JBB_DATASET = "JailbreakBench/JBB-Behaviors"
 JBB_CONFIG = "behaviors"
+JBB_LOCAL_DIR = "data/jbb"
 
 FALLBACK_HARMFUL_PATH = "data/fallback_harmful_prompts.txt"
 FALLBACK_HARMLESS_PATH = "data/fallback_harmless_prompts.txt"
@@ -84,16 +87,51 @@ def _read_fallback(relative_path: str) -> list[str]:
     return [line for line in lines if line and not line.startswith("#")]
 
 
-def _load_jbb() -> tuple[list[str], list[str], dict[str, Any]]:
-    """Load the harmful and benign goal strings from JBB-Behaviors.
+def _read_jbb_csv(path: Path, column: str = "Goal") -> list[str]:
+    """Read one column out of a JBB behaviours CSV."""
+    with path.open("r", encoding="utf-8", newline="") as handle:
+        rows = list(csv.DictReader(handle))
+    if not rows:
+        raise ValueError(f"{path} contained no rows")
+    if column not in rows[0]:
+        raise ValueError(f"{path} has no {column!r} column; found {list(rows[0])}")
+    return [str(row[column]).strip() for row in rows if str(row[column]).strip()]
 
-    Returns:
-        ``(harmful, harmless, source_info)``.
+
+def _load_jbb_local() -> tuple[list[str], list[str], dict[str, Any]]:
+    """Load JBB-Behaviors from the CSVs fetched by ``scripts/fetch_datasets.ps1``.
+
+    Preferred over ``datasets.load_dataset`` because it needs no network at analysis
+    time, so a run cannot be perturbed by a download stalling halfway through.
 
     Raises:
-        Exception: Propagated from ``datasets.load_dataset`` so the caller can decide
-            whether to fall back; the failure reason is logged either way.
+        FileNotFoundError: If the CSVs have not been fetched.
     """
+    harmful_path = repo_root() / JBB_LOCAL_DIR / "harmful-behaviors.csv"
+    harmless_path = repo_root() / JBB_LOCAL_DIR / "benign-behaviors.csv"
+    if not (harmful_path.is_file() and harmless_path.is_file()):
+        raise FileNotFoundError(
+            f"JBB CSVs not found in {repo_root() / JBB_LOCAL_DIR}; fetch them with "
+            "scripts/fetch_datasets.ps1"
+        )
+
+    harmful = _read_jbb_csv(harmful_path)
+    harmless = _read_jbb_csv(harmless_path)
+    source = {
+        "kind": "jbb",
+        "via": "local_csv",
+        "dataset": JBB_DATASET,
+        "files": [str(harmful_path.name), str(harmless_path.name)],
+        "column": "Goal",
+        "citation": "Chao et al. 2024, arXiv:2404.01318",
+        "n_available_harmful": len(harmful),
+        "n_available_harmless": len(harmless),
+    }
+    return harmful, harmless, source
+
+
+def _load_jbb_hub() -> tuple[list[str], list[str], dict[str, Any]]:
+    """Load JBB-Behaviors through the ``datasets`` library."""
     from datasets import load_dataset
 
     harmful_split = load_dataset(JBB_DATASET, JBB_CONFIG, split="harmful")
@@ -105,6 +143,7 @@ def _load_jbb() -> tuple[list[str], list[str], dict[str, Any]]:
 
     source = {
         "kind": "jbb",
+        "via": "datasets_hub",
         "dataset": JBB_DATASET,
         "config": JBB_CONFIG,
         "column": column,
@@ -113,6 +152,25 @@ def _load_jbb() -> tuple[list[str], list[str], dict[str, Any]]:
         "n_available_harmless": len(harmless),
     }
     return harmful, harmless, source
+
+
+def _load_jbb() -> tuple[list[str], list[str], dict[str, Any]]:
+    """Load the harmful and benign goal strings from JBB-Behaviors.
+
+    Tries the locally fetched CSVs first, then the Hub.
+
+    Returns:
+        ``(harmful, harmless, source_info)``.
+
+    Raises:
+        Exception: Propagated so the caller can decide whether to fall back to the
+            bundled sets; the failure reason is logged either way.
+    """
+    try:
+        return _load_jbb_local()
+    except FileNotFoundError as exc:
+        logger.info("%s; trying the Hub", exc)
+        return _load_jbb_hub()
 
 
 def load_prompt_sets(

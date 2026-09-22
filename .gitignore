@@ -23,3 +23,6 @@ models/
 .env
 .env.*
 !.env.example
+
+# Third-party dataset, fetched by scripts/fetch_datasets.ps1 and not vendored here.
+data/jbb/
