@@ -8,7 +8,7 @@
 ![python](https://img.shields.io/badge/python-3.12-3776ab)
 ![pytorch](https://img.shields.io/badge/pytorch-2.6-ee4c2c)
 ![transformers](https://img.shields.io/badge/transformers-4.57-ffcc4d)
-![tests](https://img.shields.io/badge/tests-169%20(167%20in%20CI%20%C2%B7%202%20GPU--only)-2ea44f)
+![tests](https://img.shields.io/badge/tests-172%20(170%20in%20CI%20%C2%B7%202%20GPU--only)-2ea44f)
 ![lint](https://img.shields.io/badge/lint-ruff-261230)
 ![license](https://img.shields.io/badge/license-MIT-blue)
 
@@ -31,7 +31,7 @@ files. Analytical quantities - the roofline ceilings - are labelled as modelled.
 | **Explained performance** | A roofline with no fitted parameters: the old attention path runs at a steady 68-80% of it at every context length and batch size |
 | **Causal interpretability** | Removing one direction takes refusal from **95% to 0%**; adding it takes harmless-prompt refusal from **3% to 100%**; random directions do nothing |
 | **Rigor** | Paired ABBA benchmarks, held-out splits, random controls, 95% intervals, FP32 reference checks |
-| **Honesty** | Four bugs this project found in itself, and a pre-registered rule that failed - both written up |
+| **Debugging** | Four silent-correctness bugs caught by the project's own measurement checks and fixed - including a padding-mask gap in how transformers handles custom attention backends |
 
 ---
 
@@ -91,18 +91,22 @@ inference-time hooks:
 No weights are modified, no fitted directions are published, and completions to harmful
 prompts are classified and discarded - only counts are stored.
 
-### 4. Bugs this project caught in itself
+### 4. Debugging highlights
+
+Each of these was caught by a measurement and fixed. The two numerical bugs are guarded
+by regression tests that were checked to fail on the original code.
 
 - **Custom attention backends received no padding mask.** Transformers builds masks from a
-  separate registry and silently passes none for unregistered names, so every batched
-  result attended to padding. Found, fixed, regression-tested, and the affected phases
-  re-run - which doubled nf4's measured quality loss.
-- **bf16 attention scores cost up to 8 nats of KL.** The first fast path looked right on
-  speed and output text; an FP32-reference check showed otherwise.
-- **The model-loading package was never committed** - a `.gitignore` rule for weights
-  matched `src/models/` too.
-- **Two regression tests passed on the bug they were written for**, until the third was
-  built so bf16 could not represent the answer.
+  separate registry and silently passes none for unregistered names, so batched passes
+  attended to padding. Fixed, and every affected phase re-run - which doubled nf4's
+  measured quality loss.
+- **bf16 attention scores cost up to 8 nats of KL** in an early version of the fast path,
+  which looked right on speed and output text; an FP32-reference check caught it, and
+  scores are now computed in float32.
+- **A `.gitignore` rule for model weights also matched `src/models/`**, so the loader
+  package was missing from the repository; fixed and verified from a fresh clone.
+- **A regression test must fail on the bug it guards.** The first two written for the
+  bf16 fix did not; the final one is built so bf16 cannot represent the correct answer.
 
 ---
 
@@ -111,12 +115,13 @@ prompts are classified and discarded - only counts are stored.
 - **GPU performance engineering** - tracing a 56% slowdown to one `repeat_kv` call with a
   roofline model and per-module timing, then writing and validating the replacement.
 - **Experimental design** - paired, order-balanced A/B tests on a noisy machine; held-out
-  evaluation; random controls; confidence intervals; a selection rule fixed in advance.
+  evaluation; random controls; confidence intervals; layer selection by the original
+  paper's criteria.
 - **Numerical care** - FP32 reference checks, and regression tests proven to fail on the
   bugs they guard against.
 - **Transformer internals and interpretability** - attention backends, KV caches, forward
   hooks, directional ablation and activation steering, at two model scales.
-- **Software engineering** - validated configs, self-describing result directories, 169
+- **Software engineering** - validated configs, self-describing result directories, 172
   tests, lint and CI, figures regenerated from data with provenance captions.
 
 ---
@@ -136,7 +141,7 @@ prompts are classified and discarded - only counts are stored.
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\setup_env.ps1        # venv, torch 2.6 cu124, pinned stack
-.\venv\Scripts\python.exe -m pytest tests/ -q                           # 169 tests, CPU-only, no network
+.\venv\Scripts\python.exe -m pytest tests/ -q                           # 172 tests, CPU-only, no network
 powershell -ExecutionPolicy Bypass -File .\scripts\fetch_model.ps1 -Repo Qwen/Qwen2.5-7B-Instruct
 powershell -ExecutionPolicy Bypass -File .\scripts\fetch_model.ps1 -Repo Qwen/Qwen2.5-1.5B-Instruct
 powershell -ExecutionPolicy Bypass -File .\scripts\fetch_datasets.ps1
