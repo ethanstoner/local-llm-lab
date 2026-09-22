@@ -1,0 +1,19 @@
+13:06:26 | INFO    | src.utils.seed               | Seeded with 1234; deterministic algorithms requested (warn_only)
+13:06:26 | INFO    | src.utils.datasets           | Loaded 100 harmful and 100 harmless prompts from jbb
+13:06:26 | INFO    | __main__                     | Prompt splits: {'harmful_train': 70, 'harmful_test': 30, 'harmless_train': 70, 'harmless_test': 30}
+13:06:27 | DEBUG   | src.models.attention         | Registered attention implementation 'sdpa_no_gqa'
+13:06:27 | DEBUG   | src.models.attention         | Registered attention implementation 'sdpa_grouped_decode'
+13:06:27 | DEBUG   | src.models.attention         | Registered attention implementation 'fp32_reference'
+13:06:27 | DEBUG   | src.models.attention         | flash attention unavailable: No available kernel. Aborting execution.
+13:06:27 | INFO    | src.models.loader            | attn_implementation=auto resolved to 'sdpa_grouped_decode'
+13:06:27 | INFO    | src.models.loader            | Loading Qwen/Qwen2.5-7B-Instruct at bf16 (bfloat16; the reference precision for this project.) onto cuda:0 from local files
+13:06:27 | DEBUG   | src.monitoring.gpu           | GPU sampling disabled by config
+13:06:35 | INFO    | src.models.loader            | Loaded in 8.72s | weights 14526 MiB | device idle 16142 MiB (baseline 1528 MiB)
+13:06:43 | INFO    | src.interpretability.refusal | Behavioural check: refused 37/40 harmful, 2/40 harmless
+13:06:43 | DEBUG   | src.interpretability.hooks   | Registered 28 activation hooks
+13:06:43 | INFO    | __main__                     | Capturing activations for harmful_train (70 prompts)
+13:06:44 | INFO    | __main__                     | Capturing activations for harmless_train (70 prompts)
+13:06:45 | INFO    | __main__                     | Capturing activations for harmful_test (30 prompts)
+13:06:45 | INFO    | __main__                     | Capturing activations for harmless_test (30 prompts)
+13:06:45 | INFO    | __main__                     | Saved activations to C:\Users\ethan\Desktop\Coding Projects\local-llm-lab\results\phase5_refusal_direction\20260922T200626Z\activations
+13:06:46 | INFO    | __main__                     | Analysis complete. Results in C:\Users\ethan\Desktop\Coding Projects\local-llm-lab\results\phase5_refusal_direction\20260922T200626Z
