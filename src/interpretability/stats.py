@@ -228,3 +228,21 @@ def layer_norm_profile(activations_by_layer: dict[int, torch.Tensor]) -> list[di
         stats = vector_norms(activations_by_layer[index])
         profile.append({"layer": index, **{k: round(v, 4) for k, v in stats.items()}})
     return profile
+
+
+def wilson_interval(successes: int, n: int, z: float = 1.959964) -> tuple[float, float]:
+    """95% Wilson score interval for a binomial proportion.
+
+    Used for refusal rates, which are measured on a few dozen prompts. The normal
+    approximation collapses to a zero-width interval at 0% or 100%, which is exactly
+    where the interesting ablation results land; Wilson does not.
+    """
+    if n <= 0:
+        return (float("nan"), float("nan"))
+    if not 0 <= successes <= n:
+        raise ValueError(f"successes={successes} outside [0, {n}]")
+    p = successes / n
+    denom = 1.0 + z * z / n
+    centre = (p + z * z / (2 * n)) / denom
+    half = z * math.sqrt(p * (1 - p) / n + z * z / (4 * n * n)) / denom
+    return (max(0.0, centre - half), min(1.0, centre + half))

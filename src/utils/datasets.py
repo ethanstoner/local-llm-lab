@@ -87,6 +87,15 @@ def _read_fallback(relative_path: str) -> list[str]:
     return [line for line in lines if line and not line.startswith("#")]
 
 
+def load_bundled_prompts() -> tuple[list[str], list[str]]:
+    """Return every bundled ``(harmful, harmless)`` prompt, unsampled.
+
+    Phase 6 uses these as an out-of-distribution evaluation set: they were written
+    independently of JailbreakBench and no direction was ever fitted on them.
+    """
+    return _read_fallback(FALLBACK_HARMFUL_PATH), _read_fallback(FALLBACK_HARMLESS_PATH)
+
+
 def _read_jbb_csv(path: Path, column: str = "Goal") -> list[str]:
     """Read one column out of a JBB behaviours CSV."""
     with path.open("r", encoding="utf-8", newline="") as handle:

@@ -191,6 +191,48 @@ class InterpretabilityConfig:
 
 
 @dataclass(frozen=True)
+class InterventionConfig:
+    """Phase 6 causal test of the Phase 5 direction.
+
+    ``direction_run`` names the Phase 5 run whose fitted directions are used - either a
+    run directory or ``"latest"``. The prompt split is rebuilt from this config's
+    ``experiment.seed`` and ``interpretability`` section and checked against that run's
+    recorded config, so the held-out prompts here are exactly the ones the direction
+    never saw.
+    """
+
+    direction_run: str = "latest"
+    direction_experiment: str = "phase5_refusal_direction"
+    target_layer: int | None = None
+    source_layers: tuple[int, ...] = ()
+    n_random_controls: int = 3
+    addition_coefficients: tuple[float, ...] = (1.0,)
+    max_new_tokens: int = 32
+    batch_size: int = 8
+    include_bundled_prompts: bool = True
+    measure_capability: bool = True
+    max_perplexity_ratio: float = 1.05
+    judge_model_id: str | None = None
+    judge_local_path: str | None = None
+
+    def __post_init__(self) -> None:
+        if self.max_new_tokens < 1:
+            raise ConfigError("intervention.max_new_tokens must be >= 1")
+        if self.batch_size < 1:
+            raise ConfigError("intervention.batch_size must be >= 1")
+        if self.n_random_controls < 0:
+            raise ConfigError("intervention.n_random_controls must be >= 0")
+        if any(layer < 0 for layer in self.source_layers):
+            raise ConfigError("intervention.source_layers must be non-negative block indices")
+        if self.target_layer is not None and self.target_layer < 0:
+            raise ConfigError("intervention.target_layer must be a non-negative block index")
+        if self.max_perplexity_ratio < 1.0:
+            raise ConfigError("intervention.max_perplexity_ratio must be >= 1.0")
+        if any(c <= 0 for c in self.addition_coefficients):
+            raise ConfigError("intervention.addition_coefficients must all be positive")
+
+
+@dataclass(frozen=True)
 class LabConfig:
     """A whole experiment configuration."""
 
@@ -200,6 +242,7 @@ class LabConfig:
     monitoring: MonitoringConfig = field(default_factory=MonitoringConfig)
     evaluation: EvaluationConfig = field(default_factory=EvaluationConfig)
     interpretability: InterpretabilityConfig = field(default_factory=InterpretabilityConfig)
+    intervention: InterventionConfig = field(default_factory=InterventionConfig)
     source_path: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
@@ -214,6 +257,7 @@ _SECTION_TYPES: dict[str, type] = {
     "monitoring": MonitoringConfig,
     "evaluation": EvaluationConfig,
     "interpretability": InterpretabilityConfig,
+    "intervention": InterventionConfig,
 }
 
 #: Fields typed as tuples in the dataclasses but naturally written as YAML lists.
@@ -221,6 +265,8 @@ _TUPLE_FIELDS = {
     "precisions",
     "context_lengths",
     "compare_precisions",
+    "source_layers",
+    "addition_coefficients",
 }
 
 
