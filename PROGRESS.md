@@ -234,6 +234,70 @@ with Qwen's 152k vocabulary that is a ~5 GiB tensor on top of 15 GiB of weights.
 also makes the dedicated prefill timing comparable to the TTFT measured inside
 `generate` rather than systematically slower than it.
 
+### Problem 7: long-context prefill was 145x slower than it should be
+
+The first Phase 1 sweep on the 7B model produced clean numbers at 128, 512 and 2048
+tokens and then appeared to hang at 8192: ten minutes, GPU pinned at 100%, 24079 MiB of
+24564 MiB in use, and 12 GB of the process resident in host RAM.
+
+It was not hung. It was paging. Instrumenting prefill alone:
+
+```
+ctx=  2048  prefill=  0.902s  peak_alloc=15851 MiB
+ctx=  4096  prefill=  1.269s  peak_alloc=19212 MiB
+ctx=  8192  prefill=179.043s  peak_alloc=32078 MiB
+```
+
+A peak allocation of 32078 MiB on a 24564 MiB card is only possible because the Windows
+display driver pages VRAM to host memory instead of failing. **No OOM is raised.** The
+run completes and is merely two hundred times slower, which is the dangerous failure
+mode: a benchmark that does not check would publish 179 s as the model's prefill
+latency.
+
+Activation memory was growing quadratically (1322 -> 4682 -> 17549 MiB for 2048 -> 4096
+-> 8192), which means the full attention matrix was being materialised. Four experiments
+to find out why:
+
+1. **Is it the attention mask?** No. Identical memory with and without it.
+2. **Which SDPA kernels exist?** `UserWarning: Torch was not compiled with flash
+   attention`. The Windows wheel has no flash kernel. Memory-efficient works and is
+   linear: 56 MiB at 8192 against math's 16832 MiB.
+3. **Force the memory-efficient kernel on the model.** `RuntimeError: No available
+   kernel` - so transformers is passing something it cannot accept.
+4. **Which argument?** `enable_gqa`:
+
+   ```
+   enable_gqa=True   mem_efficient: FAIL  No available kernel
+   enable_gqa=True   math         : OK    4344 MiB
+   enable_gqa=False  mem_efficient: OK      28 MiB
+   ```
+
+Transformers' `use_gqa_in_sdpa` passes `enable_gqa=True` whenever there is no attention
+mask, and its comment gives the reason: a mask "will fall back to the math kernel". That
+holds when a flash kernel exists. Here flash does not exist and memory-efficient does not
+implement `enable_gqa`, so the flag causes precisely the fallback it was written to
+avoid.
+
+**Fix:** `src/models/attention.py` registers `sdpa_no_gqa` - the stock SDPA path with KV
+heads expanded via `repeat_kv` and `enable_gqa` never passed. Measured on
+Qwen2.5-7B-Instruct at bf16, prefill only:
+
+| ctx | stock `sdpa` | `sdpa_no_gqa` |
+|---|---|---|
+| 2048 | 0.565 s / 1322 MiB | 0.609 s / 400 MiB |
+| 8192 | 140.667 s / 17549 MiB | 0.968 s / 1572 MiB |
+| 16384 | did not fit | 2.206 s / 3136 MiB |
+
+Activation memory is linear again. Configs now use `attn_implementation: auto`, which
+probes for a flash kernel and prefers stock `sdpa` where one exists - this is a
+workaround for a platform limitation, not an improvement on transformers, and it should
+not apply itself where it is not wanted. The probe results are recorded in every run's
+metadata.
+
+Ten tests were added, including an equivalence check against an explicit
+`softmax(QK^T/sqrt(d))V` reference, so the workaround is verified to compute the same
+thing rather than merely to run faster.
+
 ---
 
 ## Next steps
