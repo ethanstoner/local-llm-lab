@@ -1,18 +1,52 @@
+<div align="center">
+
 # Local LLM Lab
 
-A measurement framework for open-weight language models on one consumer GPU: where the
-time goes, what quantization costs, how close inference runs to what the hardware
-allows, and whether a model's refusal behaviour runs through a single direction in its
-residual stream.
+**Measuring, speeding up and taking apart a 7B language model on one consumer GPU.**
 
-It is not a chat interface or a wrapper around a serving runtime. Its output is data:
-structured result files, GPU telemetry and figures, every number measured on the
-hardware below. Nothing is estimated, and configurations that could not run are
-reported as such.
+[![tests](https://github.com/ethanstoner/local-llm-lab/actions/workflows/tests.yml/badge.svg)](https://github.com/ethanstoner/local-llm-lab/actions/workflows/tests.yml)
+![python](https://img.shields.io/badge/python-3.12-3776ab)
+![pytorch](https://img.shields.io/badge/pytorch-2.6-ee4c2c)
+![transformers](https://img.shields.io/badge/transformers-4.57-ffcc4d)
+![tests](https://img.shields.io/badge/tests-169%20passing-2ea44f)
+![lint](https://img.shields.io/badge/lint-ruff-261230)
 
-**Subject:** `Qwen/Qwen2.5-7B-Instruct` in bf16 on an RTX 4090 (24 GB), with the interpretability
-phases replicated at 1.5B. **Stack:** PyTorch 2.6, transformers 4.57, bitsandbytes.
-**Tests:** 169, CPU-only, network-free.
+</div>
+
+![results at a glance](figures/results_at_a_glance.png)
+
+A measurement framework for open-weight language models: where inference time goes, what
+quantization costs, how close the implementation runs to what the hardware allows, and
+whether the model's refusal behaviour runs through a single direction in its residual
+stream. Every number comes from a run on the hardware below, is stored with the
+conditions that produced it, and is drawn from those files. Nothing is estimated.
+
+| | |
+|---|---|
+| **Faster decoding** | A new decode-attention path: **1.57x** faster at 16k context, **1.65x** at batch 32, equally accurate |
+| **Explained performance** | A zero-parameter roofline: the old attention path runs at a steady 68-80% of it at every context and batch size |
+| **Causal interpretability** | Removing one direction: refusal **95% → 0%**. Adding it: **3% → 100%**. Random controls: no effect |
+| **Rigor** | Paired ABBA benchmarks, held-out splits, fp32 reference fidelity, 95% intervals, 169 tests |
+| **Honesty** | Four bugs this repo found in itself, and a pre-registered rule that failed, both written up |
+
+**Subject:** `Qwen/Qwen2.5-7B-Instruct` (bf16) on an RTX 4090, with the interpretability
+phases replicated on `Qwen2.5-1.5B-Instruct`. **Stack:** PyTorch 2.6, transformers 4.57,
+bitsandbytes, matplotlib.
+
+### What this project demonstrates
+
+- **GPU performance engineering:** diagnosing a 56% long-context slowdown down to a
+  single `repeat_kv` call through profiling and a roofline model, then writing and
+  validating a replacement attention path.
+- **Experimental design:** paired, order-balanced A/B testing on a noisy machine;
+  held-out evaluation; random-direction controls; confidence intervals; a selection rule
+  fixed before the data came in.
+- **Numerical care:** catching a bf16 precision bug worth up to 8 nats of KL with a
+  float32 reference, and writing regression tests proven to fail on the bug.
+- **Mechanistic interpretability:** a reproduction and extension of Arditi et al. (2024),
+  with activation hooks, directional ablation and steering, at two model scales.
+- **Software engineering:** typed, validated configs; self-describing result directories;
+  CPU-only test suite; lint; CI; figures regenerated from data with provenance captions.
 
 ---
 
@@ -25,8 +59,6 @@ is **1.57x faster at 16k context and 1.65x at batch 32**, never meaningfully slo
 as close to a float32-attention reference as the kernel it replaces. It is measured with
 a paired, order-balanced A/B, because two separate sweeps on this desktop disagreed with
 each other by more than the effect. [§4](#4-a-faster-decode-path-phases-7-and-8)
-
-![decode A/B](figures/decode_backend_ab.png)
 
 **2. A roofline with no free parameters explains the long-context slowdown.** From the
 model config and measured hardware ceilings (947 GB/s, 157.5 TFLOP/s), the byte count
@@ -44,8 +76,6 @@ explain fire extinguishers). The layers where the direction *separates* prompts 
 25-36% - while layer 16's direction removes 97.5% of refusals with **no measurable
 perplexity cost**. At 1.5B the direction still *induces* refusal, but no layer removes
 it cleanly. [§6](#6-the-refusal-direction-is-causal-phase-6), [§7](#7-does-it-hold-at-15b)
-
-![causal test](figures/intervention_layer_sweep.png)
 
 **4. This repository's own bugs, found by its own checks.** Four defects that would have
 quietly corrupted results, each caught by a measurement rather than by reading code - a
@@ -119,6 +149,8 @@ throughout. A single "tokens per second" figure averages the two. Time to first 
 and a separately timed prefill pass agree to within 1% (209 ms against 2048/9903 =
 207 ms), which is the evidence that the timing harness measures what it claims.
 
+<img src="figures/throughput_vs_context.png" width="49%"> <img src="figures/memory_throughput_tradeoff.png" width="49%">
+
 | precision | decode tok/s | weights | vs bf16 | notes |
 |---|---|---|---|---|
 | bf16 | 44.0 | 14526 MiB | - | reference |
@@ -153,6 +185,8 @@ decoding is chaotic: once two models pick different tokens anywhere, the sequenc
 separate for good, so exact match mostly measures how long numerical noise takes to flip
 one argmax. Every fidelity comparison in this repository therefore uses
 teacher-forced distribution divergence instead.
+
+![fidelity by precision](figures/quality_by_precision.png)
 
 ---
 
@@ -190,9 +224,10 @@ residual is a constant overhead (kernel launches and small ops at batch 1), not
 anything that grows with context. That is the diagnosis §4 acts on.
 
 **Prefill** reaches 42% of measured GEMM throughput at 128 tokens, 85% at 2048, and
-falls to 77% at 16k as attention's share of the work reaches 20%
-([figure](figures/prefill_roofline.png)). **nf4** decodes at 27-34% of its bandwidth
+falls to 77% at 16k as attention's share of the work reaches 20%. **nf4** decodes at 27-34% of its bandwidth
 roofline and **int8** at 14-16%: for both, dequantisation - not memory - is the bottleneck.
+
+![prefill roofline](figures/prefill_roofline.png)
 
 ---
 
@@ -249,7 +284,9 @@ KL is the mean next-token KL over 64 teacher-forced decode steps against a backe
 does decode attention entirely in float32. Both paths sit at 1e-4 to 7e-4 nats, and
 their top-1 agreement with the reference is identical at every length.
 
-**Batched, 512-token prompt, 3 paired rounds** ([figure](figures/batch_throughput.png)):
+![decode A/B](figures/decode_backend_ab.png)
+
+**Batched, 512-token prompt, 3 paired rounds:**
 
 | batch | old tok/s per sequence | new | speed-up | new aggregate tok/s |
 |---|---|---|---|---|
@@ -263,6 +300,8 @@ The gap grows with batch because `repeat_kv` copies every sequence's cache. Batc
 reached 24054 of 24564 MiB; the harness flagged it and it is excluded, though it would
 have shown a 2.1x "speed-up". `attn_implementation: auto` now selects the new path on
 builds without flash attention.
+
+![batch throughput](figures/batch_throughput.png)
 
 ---
 
@@ -293,6 +332,8 @@ wherever the signal is weak - at layer 0 it doubles it (1.35 against 0.62) - whi
 what fitting 3584 dimensions to 70 examples per class does. Directions from neighbouring
 layers are related but not identical: cosine similarity to layer 20's is 0.35 at layer 16,
 0.76 at 19, 0.84 at 21 and 0.39 at 27.
+
+![layer separation](figures/refusal_layer_separation.png)
 
 *These are the corrected numbers. The first Phase 5 run was made while custom attention
 backends received no padding mask (§8); the conclusions held, and every number
@@ -340,6 +381,8 @@ baseline's distinct-token ratio (0.92 against 0.93), and the independent judge s
 them at 1.1-1.3 nats per token - above the 0.7-0.9 of the model's ordinary answers, far
 below the 2.2-2.7 of genuinely degenerate output (below). Harmful completions are scored
 and discarded; none is stored.
+
+![necessity and sufficiency](figures/intervention_overview.png)
 
 ### Observation is not intervention
 
@@ -394,8 +437,9 @@ measures topic rather than refusal.
 
 **Separation is weaker, at the same relative depth.** Held-out *d* peaks at 2.0 (layer
 18, AUROC 0.91) against 3.8 for the 7B model, but rises over the same stretch of the
-network: from ~1.0 at layer 10 to its plateau by layers 15-18 of 28
-([figure](figures/refusal_cross_scale.png)).
+network: from ~1.0 at layer 10 to its plateau by layers 15-18 of 28.
+
+![cross-scale](figures/refusal_cross_scale.png)
 
 **Sufficiency replicates; clean necessity does not.**
 

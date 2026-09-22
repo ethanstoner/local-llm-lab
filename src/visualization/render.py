@@ -464,6 +464,21 @@ def main(argv: Sequence[str] | None = None) -> int:
         except Exception as exc:
             logger.exception("Failed to render %s figures: %s", kind, exc)
 
+    if "decode_ab" in discovered and "intervention" in discovered:
+        try:
+            ab = read_json(discovered["decode_ab"] / "interleaved.json")
+            iv = read_json(discovered["intervention"] / "intervention.json")
+            glance = plots.results_at_a_glance(
+                ab.get("summary") or [], ab["meta"]["config"]["comparison"]["backends"], iv,
+                figures_dir / "results_at_a_glance.png",
+                f"sources: {discovered['decode_ab'].relative_to(repo_root()).as_posix()} · "
+                f"{discovered['intervention'].relative_to(repo_root()).as_posix()}",
+            )
+            if glance:
+                written.append(glance)
+        except Exception as exc:
+            logger.exception("Failed to render the overview figure: %s", exc)
+
     try:
         written.extend(render_cross_scale(resolve_under_repo(args.results_root), figures_dir))
     except Exception as exc:

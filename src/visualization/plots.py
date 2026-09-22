@@ -1105,3 +1105,90 @@ def cross_scale_layers(runs: Mapping[str, Sequence[Mapping[str, Any]]], path: Pa
     _despine(ax)
     fig.tight_layout()
     return _finish(fig, path, subtitle)
+
+
+# --------------------------------------------------------------------------------------
+# Overview
+# --------------------------------------------------------------------------------------
+
+
+def results_at_a_glance(
+    decode_summary: Sequence[Mapping[str, Any]],
+    backends: Sequence[str],
+    intervention: Mapping[str, Any],
+    path: Path,
+    subtitle: str = "",
+) -> Path | None:
+    """Three panels, one per headline result, for the top of the README."""
+    rows = sorted((s for s in decode_summary if s.get("batch_size") == 1), key=lambda s: s["context_length"])
+    sweep = sorted(intervention.get("layer_sweep") or [], key=lambda r: r["source_layer"])
+    harmful = (intervention.get("pooled") or {}).get("harmful") or {}
+    harmless = (intervention.get("pooled") or {}).get("harmless") or {}
+    observed = (intervention.get("selection") or {}).get("observational_layer")
+    if not rows or not sweep or not harmful or len(backends) < 2:
+        return None
+
+    fig, axes = plt.subplots(1, 3, figsize=(16.5, 4.6))
+
+    ax = axes[0]
+    x = [s["context_length"] for s in rows]
+    for backend in backends:
+        ax.plot(x, [s[f"{backend}_decode_tok_s_median"] for s in rows], marker="o",
+                color=BACKEND_COLORS.get(backend, NEUTRAL_MARK), label=BACKEND_LABELS.get(backend, backend))
+    last = rows[-1]
+    ratio = last.get(f"{backends[1]}_vs_{backends[0]}_ratio_median")
+    if ratio:
+        top = last[f"{backends[1]}_decode_tok_s_median"]
+        bottom = last[f"{backends[0]}_decode_tok_s_median"]
+        ax.annotate("", xy=(x[-1] * 1.12, top), xytext=(x[-1] * 1.12, bottom),
+                    arrowprops={"arrowstyle": "<->", "color": TEXT_PRIMARY, "linewidth": 1.2})
+        ax.annotate(f"{ratio:.2f}x", xy=(x[-1] * 1.12, (top + bottom) / 2), xytext=(6, 0),
+                    textcoords="offset points", va="center", fontsize=11, fontweight="semibold", color=TEXT_PRIMARY)
+    ax.set_xscale("log", base=2)
+    ax.xaxis.set_major_formatter(_context_formatter())
+    ax.set_xticks(x)
+    ax.set_xlim(x[0] / 1.4, x[-1] * 2.0)
+    ax.set_ylim(bottom=0)
+    ax.set_xlabel("prompt length (tokens)")
+    ax.set_ylabel("decode tokens / second")
+    ax.set_title("1. A faster decode path")
+    ax.legend(loc="lower left", fontsize=8.5)
+
+    ax = axes[1]
+    layers = [r["source_layer"] for r in sweep]
+    ax.fill_between(layers, [r["harmful_refusal_ci_low"] * 100 for r in sweep],
+                    [r["harmful_refusal_ci_high"] * 100 for r in sweep], color=INTERVENTION_COLOR, alpha=0.15, linewidth=0)
+    ax.plot(layers, [r["harmful_refusal_rate"] * 100 for r in sweep], marker="o", color=INTERVENTION_COLOR,
+            label="refusal direction from that layer")
+    randoms = [v["refusal_rate"] * 100 for k, v in harmful.items() if k.startswith("ablate:random")]
+    if randoms:
+        ax.axhline(sum(randoms) / len(randoms), color=CONTROL_COLOR, linestyle="--", linewidth=1.5,
+                   label="random directions (controls)")
+    ax.set_ylim(-3, 105)
+    ax.set_xlabel("layer the ablated direction came from")
+    ax.set_ylabel("refusal on harmful prompts (%)")
+    ax.set_title("2. Removing one direction stops refusal")
+    ax.legend(loc="lower left", fontsize=8.5)
+
+    ax = axes[2]
+    doses = sorted((float(k.split("x")[-1]), v) for k, v in harmless.items() if k.startswith(f"add:L{observed}x"))
+    if doses:
+        ax.plot([0.0] + [d for d, _ in doses], [harmless["baseline"]["refusal_rate"] * 100] +
+                [v["refusal_rate"] * 100 for _, v in doses], marker="o", color=INTERVENTION_COLOR,
+                label=f"layer {observed} direction")
+    controls = [v["refusal_rate"] * 100 for k, v in harmless.items() if k.startswith(f"add:L{observed}random")]
+    if controls:
+        ax.scatter([1.0] * len(controls), controls, marker="x", s=55, color=CONTROL_COLOR, zorder=3,
+                   label="random vectors, same norm")
+    ax.set_ylim(-3, 105)
+    ax.set_xlabel("added vector (x class-mean difference)")
+    ax.set_ylabel("refusal on harmless prompts (%)")
+    ax.set_title("3. Adding it makes the model refuse")
+    ax.legend(loc="upper left", fontsize=8.5)
+
+    for ax in axes:
+        _despine(ax)
+    fig.suptitle("Qwen2.5-7B-Instruct on one RTX 4090", x=0.0, ha="left", fontsize=13,
+                 fontweight="semibold", color=TEXT_PRIMARY)
+    fig.tight_layout()
+    return _finish(fig, path, subtitle)
