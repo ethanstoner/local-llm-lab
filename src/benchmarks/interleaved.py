@@ -38,6 +38,7 @@ from src.models.attention import set_attn_implementation
 from src.models.loader import load_model
 from src.models.oom import oom_guard, release_memory
 from src.monitoring.gpu import GpuSampler
+from src.monitoring.memory import paging_suspected
 from src.utils.config import ConfigError, load_config
 from src.utils.env import collect_metadata
 from src.utils.io import create_run_dir, write_csv, write_json
@@ -231,7 +232,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                             "prefill_s": round(timing.prefill_latency_s or float("nan"), 5),
                             "peak_allocated_mib": round(torch.cuda.max_memory_allocated(args.device) / 2**20, 1),
                             "peak_device_used_mib": peak_device,
-                            "paging_suspected": peak_device >= cmp.paging_threshold * total_mib,
+                            "paging_suspected": paging_suspected(peak_device, total_mib, cmp.paging_threshold),
                             "mean_gpu_util_pct": telemetry.get("mean_gpu_util_pct"),
                             "tokens_sha1": hashlib.sha1(sequences[backend].numpy().tobytes()).hexdigest()[:12],
                         }
