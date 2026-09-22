@@ -65,16 +65,39 @@ the same prompt run alone.
 
 ## Decode: read the KV cache once
 
-``sdpa_no_gqa`` fixes prefill but is wasteful for decoding. With one query token, the
-memory-efficient kernel parallelises over batch x heads - 28 thread blocks at batch 1 on
-a 128-SM card - and ``repeat_kv`` first copies the whole cache ``groups`` times per
-layer per token. At 16k context that is ~6.6 GB of extra traffic per generated token.
+``sdpa_no_gqa`` fixes prefill but is wasteful for decoding. ``repeat_kv`` copies the
+whole cache ``groups`` times per layer per token - ~6.6 GB of extra traffic per token at
+16k context - and the memory-efficient kernel then parallelises over batch x heads,
+which at batch 1 is 28 thread blocks on a 128-SM card.
 
-``sdpa_grouped_decode`` keeps the ``sdpa_no_gqa`` prefill and replaces the decode step
-with two grouped matmuls: the query heads that share a KV head are stacked as rows of
-one matrix, so each key and value is read exactly once, with no expansion and with
-cuBLAS tiling over the sequence dimension. The arithmetic follows transformers' eager
-attention (bf16 scores, float32 softmax).
+``sdpa_grouped_decode`` keeps that prefill and never expands the cache when decoding.
+The query heads that share a KV head are stacked, so each key and value is read once.
+Two ways of computing the result then win at different cache lengths, measured per
+layer on this card (Qwen2.5-7B shapes, batch 1):
+
+| cached tokens | repeat_kv + SDPA | folded SDPA | grouped fp32 matmul |
+|---------------|------------------|-------------|---------------------|
+| 128           | 43 us            | **26 us**   | 77 us               |
+| 1024          | 69 us            | **44 us**   | 72 us               |
+| 2048          | 114 us           | 92 us       | **91 us**           |
+| 16384         | 995 us           | 702 us      | **153 us**          |
+
+*Folded SDPA* treats the stacked heads as extra query positions of one non-causal
+attention call (a decode query may attend to every cached key), which lets PyTorch's
+memory-efficient kernel run without ``enable_gqa``. It is fastest while the cache is
+short, but it launches one block per KV head, and four blocks cannot keep 128 SMs busy
+over a long sequence. The *grouped matmul* hands the sequence dimension to cuBLAS,
+which tiles it across the whole card. The switch happens at
+:data:`GROUPED_MATMUL_MIN_KV`, the measured crossover.
+
+The matmul path computes attention scores in **float32**, and that is not optional. A
+first version followed transformers' eager attention and rounded the scores to bf16
+before the softmax. Measured against a float32-attention reference over 64
+teacher-forced decode steps, that version's mean next-token KL was 0.09-0.14 nats with
+single steps above 8 nats - two to three orders of magnitude worse than the SDPA
+kernel's ~1e-4. Qwen2.5's attention logits are large enough that bf16's 8-bit mantissa
+cannot place them within a softmax temperature of the right value. Upcasting the keys
+costs ~6% of the kernel time at 16k and restores SDPA-level fidelity.
 """
 
 from __future__ import annotations
@@ -191,8 +214,18 @@ def sdpa_no_gqa_attention_forward(
 #: Name for the variant with a grouped, expansion-free decode step.
 SDPA_GROUPED_DECODE = "sdpa_grouped_decode"
 
+#: A slow, float32-attention decode path. Used only as the yardstick for fidelity
+#: measurements, never for timing.
+FP32_REFERENCE = "fp32_reference"
+
 #: Every custom implementation this module registers.
-CUSTOM_IMPLEMENTATIONS = (SDPA_NO_GQA, SDPA_GROUPED_DECODE)
+CUSTOM_IMPLEMENTATIONS = (SDPA_NO_GQA, SDPA_GROUPED_DECODE, FP32_REFERENCE)
+
+#: Cache length at which the grouped matmul overtakes folded SDPA for decoding. Measured
+#: on an RTX 4090 with Qwen2.5-7B shapes (see the module docstring); the crossover lies
+#: between 1024 and 1536 cached tokens. Hardware-specific, and harmless to get slightly
+#: wrong: both paths are exact to within bf16 rounding.
+GROUPED_MATMUL_MIN_KV = 1400
 
 
 def grouped_decode_attention(
@@ -201,6 +234,7 @@ def grouped_decode_attention(
     value: torch.Tensor,
     attention_mask: Optional[torch.Tensor],
     scaling: Optional[float] = None,
+    min_kv_for_matmul: int = GROUPED_MATMUL_MIN_KV,
 ) -> torch.Tensor:
     """Single-query attention without expanding the KV heads.
 
@@ -211,6 +245,8 @@ def grouped_decode_attention(
         attention_mask: ``None``, a boolean ``(batch, 1, 1, kv_len)`` mask where True
             means attend, or an additive float mask of the same shape.
         scaling: Softmax temperature; ``1/sqrt(dim)`` when omitted.
+        min_kv_for_matmul: Cache length from which the grouped fp32 matmul is used
+            instead of folded SDPA.
 
     Returns:
         ``(batch, 1, heads, dim)``, the layout transformers expects back.
@@ -220,7 +256,7 @@ def grouped_decode_attention(
     query with its own key and value.
     """
     batch, heads, q_len, dim = query.shape
-    kv_heads = key.shape[1]
+    kv_heads, kv_len = key.shape[1], key.shape[-2]
     if q_len != 1:
         raise ValueError(f"grouped decode needs one query position, got {q_len}")
     if heads % kv_heads:
@@ -229,15 +265,21 @@ def grouped_decode_attention(
     scale = scaling if scaling is not None else dim**-0.5
 
     q = query.reshape(batch, kv_heads, groups, dim)
-    scores = torch.matmul(q, key.transpose(-1, -2)) * scale
-    if attention_mask is not None:
-        mask = attention_mask[..., : key.shape[-2]]
-        if mask.dtype == torch.bool:
-            scores = scores.masked_fill(~mask, float("-inf"))
-        else:
-            scores = scores + mask
-    probs = torch.softmax(scores, dim=-1, dtype=torch.float32).to(value.dtype)
-    out = torch.matmul(probs, value)
+    mask = None if attention_mask is None else attention_mask[..., :kv_len]
+
+    if kv_len < min_kv_for_matmul:
+        out = torch.nn.functional.scaled_dot_product_attention(
+            q, key, value, attn_mask=mask, scale=scale, is_causal=False
+        )
+    else:
+        scores = torch.matmul(q.float() * scale, key.float().transpose(-1, -2))
+        if mask is not None:
+            if mask.dtype == torch.bool:
+                scores = scores.masked_fill(~mask, float("-inf"))
+            else:
+                scores = scores + mask.float()
+        probs = torch.softmax(scores, dim=-1).to(value.dtype)
+        out = torch.matmul(probs, value)
     return out.reshape(batch, heads, 1, dim).transpose(1, 2).contiguous()
 
 
@@ -261,6 +303,41 @@ def sdpa_grouped_decode_attention_forward(
     )
 
 
+def fp32_reference_attention_forward(
+    module: torch.nn.Module,
+    query: torch.Tensor,
+    key: torch.Tensor,
+    value: torch.Tensor,
+    attention_mask: Optional[torch.Tensor],
+    dropout: float = 0.0,
+    scaling: Optional[float] = None,
+    is_causal: Optional[bool] = None,
+    **kwargs: Any,
+) -> tuple[torch.Tensor, None]:
+    """Decode steps in float32 end to end; prefill as ``sdpa_no_gqa``.
+
+    The weights and the cache stay bf16 - this isolates the attention arithmetic, which
+    is the only thing the decode backends differ in.
+    """
+    if query.shape[2] != 1:
+        return sdpa_no_gqa_attention_forward(
+            module, query, key, value, attention_mask,
+            dropout=dropout, scaling=scaling, is_causal=is_causal, **kwargs,
+        )
+    from transformers.integrations.sdpa_attention import repeat_kv
+
+    groups = query.shape[1] // key.shape[1]
+    k = repeat_kv(key, groups).float()
+    v = repeat_kv(value, groups).float()
+    scale = scaling if scaling is not None else query.shape[-1] ** -0.5
+    scores = (query.float() @ k.transpose(-1, -2)) * scale
+    if attention_mask is not None:
+        mask = attention_mask[..., : key.shape[-2]]
+        scores = scores.masked_fill(~mask, float("-inf")) if mask.dtype == torch.bool else scores + mask.float()
+    out = torch.softmax(scores, dim=-1) @ v
+    return out.to(query.dtype).transpose(1, 2).contiguous(), None
+
+
 def register_attention_backends() -> list[str]:
     """Register this project's custom attention implementations with transformers.
 
@@ -280,6 +357,7 @@ def register_attention_backends() -> list[str]:
     functions = {
         SDPA_NO_GQA: sdpa_no_gqa_attention_forward,
         SDPA_GROUPED_DECODE: sdpa_grouped_decode_attention_forward,
+        FP32_REFERENCE: fp32_reference_attention_forward,
     }
     for name, fn in functions.items():
         if name not in ALL_ATTENTION_FUNCTIONS.valid_keys():
@@ -290,6 +368,33 @@ def register_attention_backends() -> list[str]:
         if name not in AttentionMaskInterface._global_mapping:
             AttentionMaskInterface.register(name, sdpa_mask)
     return list(ALL_ATTENTION_FUNCTIONS.valid_keys())
+
+
+def set_attn_implementation(model: torch.nn.Module, name: str) -> None:
+    """Switch a loaded model's attention backend in place.
+
+    Attention modules look their function up by ``config._attn_implementation`` on every
+    forward pass, and the mask builder does the same, so changing the shared config is
+    enough - provided the config really is shared. That is checked rather than assumed:
+    a module holding its own copy would silently keep the old backend.
+
+    Raises:
+        ValueError: If ``name`` is not a registered implementation.
+        RuntimeError: If any attention module does not share the model's config.
+    """
+    from transformers.modeling_utils import ALL_ATTENTION_FUNCTIONS
+
+    register_attention_backends()
+    if name != "eager" and name not in ALL_ATTENTION_FUNCTIONS.valid_keys():
+        raise ValueError(f"unknown attention implementation {name!r}")
+    config = model.config
+    stray = [
+        n for n, m in model.named_modules()
+        if n.endswith("self_attn") and getattr(m, "config", config) is not config
+    ]
+    if stray:
+        raise RuntimeError(f"attention modules with a private config: {stray[:3]}")
+    config._attn_implementation = name
 
 
 def recommended_attn_implementation() -> str:

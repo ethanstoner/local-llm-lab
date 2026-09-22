@@ -213,14 +213,16 @@ def _reference_decode(query, key, value, additive_mask=None):
 
 
 @pytest.mark.parametrize("groups", [1, 7])
-def test_grouped_decode_matches_reference(groups: int) -> None:
+@pytest.mark.parametrize("path", ["folded_sdpa", "grouped_matmul"])
+def test_grouped_decode_matches_reference(groups: int, path: str) -> None:
     torch.manual_seed(2)
     kv_heads, kv_len, dim = 2, 11, 8
+    threshold = kv_len + 1 if path == "folded_sdpa" else 1
     query = torch.randn(3, kv_heads * groups, 1, dim)
     key = torch.randn(3, kv_heads, kv_len, dim)
     value = torch.randn(3, kv_heads, kv_len, dim)
 
-    out = grouped_decode_attention(query, key, value, None)
+    out = grouped_decode_attention(query, key, value, None, min_kv_for_matmul=threshold)
     assert out.shape == (3, 1, kv_heads * groups, dim)
     assert torch.allclose(out, _reference_decode(query, key, value), atol=1e-5)
 
@@ -228,8 +230,36 @@ def test_grouped_decode_matches_reference(groups: int) -> None:
     keep[0, ..., :4] = False
     additive = torch.zeros(3, 1, 1, kv_len).masked_fill(~keep, float("-inf"))
     expected = _reference_decode(query, key, value, additive)
-    assert torch.allclose(grouped_decode_attention(query, key, value, keep), expected, atol=1e-5)
-    assert torch.allclose(grouped_decode_attention(query, key, value, additive), expected, atol=1e-5)
+    for mask in (keep, additive):
+        got = grouped_decode_attention(query, key, value, mask, min_kv_for_matmul=threshold)
+        assert torch.allclose(got, expected, atol=1e-5)
+
+
+def test_grouped_matmul_scores_are_computed_in_float32() -> None:
+    """Regression: bf16 scores cost two to three orders of magnitude in decode fidelity.
+
+    Every input is exactly representable in bf16, but the two scores - 500.0 and 500.5
+    - are not both: bf16 spaces values 2.0 apart at that magnitude, so a bf16 score
+    rounds 500.5 to 500 and attention splits 50/50. The true split is
+    softmax([500.0, 500.5]) = [0.378, 0.622]. With one-hot values the output *is* the
+    attention weights, so a bf16-score implementation misses by ~0.12.
+    """
+    dim = 8
+    query = torch.zeros(1, 1, 1, dim, dtype=torch.bfloat16)
+    query[..., :2] = 1.0
+    key = torch.zeros(1, 1, 2, dim, dtype=torch.bfloat16)
+    key[0, 0, 0, 0] = 500.0
+    key[0, 0, 1, 0] = 500.0
+    key[0, 0, 1, 1] = 0.5
+    value = torch.zeros(1, 1, 2, dim, dtype=torch.bfloat16)
+    value[0, 0, 0, 2] = 1.0
+    value[0, 0, 1, 3] = 1.0
+
+    weights = torch.softmax(torch.tensor([500.0, 500.5]), dim=0)
+    out = grouped_decode_attention(query, key, value, None, scaling=1.0, min_kv_for_matmul=1).float()
+    # bf16 output rounding allows ~4e-3 here; a tie would be off by 0.12.
+    assert out[0, 0, 0, 2].item() == pytest.approx(weights[0].item(), abs=1e-2)
+    assert out[0, 0, 0, 3].item() == pytest.approx(weights[1].item(), abs=1e-2)
 
 
 def test_grouped_decode_rejects_prefill_shapes() -> None:
