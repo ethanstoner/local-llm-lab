@@ -10,9 +10,10 @@ from __future__ import annotations
 import csv
 import json
 import math
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import asdict, is_dataclass
 from pathlib import Path
-from typing import Any, Iterable, Mapping, Sequence
+from typing import Any
 
 from src.utils.env import run_slug
 from src.utils.logging import get_logger

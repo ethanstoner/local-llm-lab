@@ -268,7 +268,7 @@ def split_prompt_sets(sets: PromptSets, test_fraction: float, seed: int = 1234) 
     def _split(items: list[str]) -> tuple[list[str], list[str]]:
         shuffled = list(items)
         rng.shuffle(shuffled)
-        n_test = max(1, int(round(len(shuffled) * test_fraction)))
+        n_test = max(1, round(len(shuffled) * test_fraction))
         n_test = min(n_test, len(shuffled) - 1)
         return shuffled[n_test:], shuffled[:n_test]
 

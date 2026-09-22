@@ -20,7 +20,8 @@ its unmodified state between conditions.
 
 from __future__ import annotations
 
-from typing import Any, Sequence
+from collections.abc import Sequence
+from typing import Any
 
 import torch
 from torch import nn
@@ -133,7 +134,7 @@ class _HookContext:
             handle.remove()
         self._handles.clear()
 
-    def __enter__(self) -> "_HookContext":
+    def __enter__(self) -> _HookContext:
         self.register()
         return self
 

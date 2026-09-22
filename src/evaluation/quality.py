@@ -25,8 +25,9 @@ models are never resident on the card at the same time.
 from __future__ import annotations
 
 import math
+from collections.abc import Sequence
 from dataclasses import dataclass, field
-from typing import Any, Sequence
+from typing import Any
 
 import torch
 
@@ -267,7 +268,7 @@ def continuation_agreement(
     agreements: list[float] = []
     divergence_points: list[int] = []
 
-    for ref, cand in zip(reference, candidate):
+    for ref, cand in zip(reference, candidate, strict=True):
         length = min(len(ref), len(cand))
         matches = sum(1 for i in range(length) if ref[i] == cand[i])
         agreements.append(matches / length if length else 0.0)

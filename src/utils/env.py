@@ -12,7 +12,7 @@ import importlib.metadata
 import platform
 import subprocess
 import sys
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -37,12 +37,12 @@ _TRACKED_PACKAGES = (
 
 def utc_timestamp() -> str:
     """Return an ISO-8601 UTC timestamp."""
-    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+    return datetime.now(UTC).isoformat(timespec="seconds")
 
 
 def run_slug() -> str:
     """Return a filesystem-safe, sortable timestamp for naming run directories."""
-    return datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    return datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
 
 
 def package_versions() -> dict[str, str | None]:
@@ -114,7 +114,7 @@ def gpu_info(device_index: int = 0) -> dict[str, Any]:
         import pynvml
 
         pynvml.nvmlInit()
-        handle = pynvml.nvmlDeviceGetHandleByIndex(device_index)
+        pynvml.nvmlDeviceGetHandleByIndex(device_index)  # raises if the index is invalid
         driver = pynvml.nvmlSystemGetDriverVersion()
         info["driver_version"] = driver.decode() if isinstance(driver, bytes) else driver
         pynvml.nvmlShutdown()

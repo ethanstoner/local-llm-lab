@@ -13,8 +13,8 @@ from __future__ import annotations
 import argparse
 import logging
 import sys
-from pathlib import Path
-from typing import Any, Sequence
+from collections.abc import Sequence
+from typing import Any
 
 from src.evaluation.quality import (
     QualityComparison,
@@ -188,18 +188,19 @@ def _print_summary(rows: Sequence[dict[str, Any]]) -> None:
     )
     print("\n" + header)
     print("-" * len(header))
-    for row in rows:
-        def fmt(key: str, spec: str) -> str:
-            value = row.get(key)
-            return format(value, spec) if isinstance(value, (int, float)) else "-"
 
+    def fmt(row: dict[str, Any], key: str, spec: str) -> str:
+        value = row.get(key)
+        return format(value, spec) if isinstance(value, (int, float)) else "-"
+
+    for row in rows:
         print(
             f"{row['precision']:<10}"
             f"{row['status']:>12}"
-            f"{fmt('tf_top1_agreement', '.4f'):>12}"
-            f"{fmt('tf_perplexity_ratio', '.4f'):>11}"
-            f"{fmt('dist_mean_kl_nats', '.5f'):>11}"
-            f"{fmt('cont_exact_match_rate', '.3f'):>12}"
+            f"{fmt(row, 'tf_top1_agreement', '.4f'):>12}"
+            f"{fmt(row, 'tf_perplexity_ratio', '.4f'):>11}"
+            f"{fmt(row, 'dist_mean_kl_nats', '.5f'):>11}"
+            f"{fmt(row, 'cont_exact_match_rate', '.3f'):>12}"
         )
     print()
 

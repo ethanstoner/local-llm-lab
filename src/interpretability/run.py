@@ -17,8 +17,8 @@ from __future__ import annotations
 import argparse
 import logging
 import sys
-from pathlib import Path
-from typing import Any, Sequence
+from collections.abc import Sequence
+from typing import Any
 
 import torch
 
@@ -34,7 +34,7 @@ from src.models.loader import load_model
 from src.models.oom import oom_guard, release_memory
 from src.models.registry import check_precision_support
 from src.monitoring.gpu import GpuSampler
-from src.utils.config import ConfigError, LabConfig, load_config
+from src.utils.config import ConfigError, load_config
 from src.utils.datasets import load_prompt_sets, split_prompt_sets
 from src.utils.env import collect_metadata
 from src.utils.io import create_run_dir, write_csv, write_json

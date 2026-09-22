@@ -13,8 +13,9 @@ analyses here only ever use one vector per prompt per layer.
 
 from __future__ import annotations
 
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
-from typing import Any, Iterable, Sequence
+from typing import Any
 
 import torch
 from torch import nn
@@ -184,7 +185,7 @@ class ActivationRecorder:
 
     # -- lifecycle ---------------------------------------------------------------
 
-    def __enter__(self) -> "ActivationRecorder":
+    def __enter__(self) -> ActivationRecorder:
         self.register()
         return self
 

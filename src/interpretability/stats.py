@@ -205,7 +205,7 @@ def pca(
         matrix = matrix - matrix.mean(dim=0, keepdim=True)
 
     q = min(n_components + 4, min(matrix.shape))
-    u, s, v = torch.pca_lowrank(matrix, q=q, center=False)
+    _, s, v = torch.pca_lowrank(matrix, q=q, center=False)
 
     components = v[:, :n_components].T
     projected = matrix @ components.T

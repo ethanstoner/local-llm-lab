@@ -20,9 +20,10 @@ and score them. Nothing but counts and summary statistics leaves this module.
 
 from __future__ import annotations
 
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from statistics import mean, median
-from typing import Any, Callable, Sequence
+from typing import Any
 
 import torch
 
@@ -112,7 +113,7 @@ def completion_nll(
         raise ValueError(f"{len(prompts)} prompts but {len(completions)} completions")
     target = device or next(model.parameters()).device
     scores: list[float | None] = []
-    for text, completion in zip(format_chat(tokenizer, prompts), completions):
+    for text, completion in zip(format_chat(tokenizer, prompts), completions, strict=True):
         if not completion:
             scores.append(None)
             continue
