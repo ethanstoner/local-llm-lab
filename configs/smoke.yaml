@@ -16,7 +16,7 @@ model:
   id: Qwen/Qwen2.5-1.5B-Instruct
   revision: main
   local_path: models/Qwen2.5-1.5B-Instruct
-  attn_implementation: sdpa
+  attn_implementation: auto
 
 benchmark:
   precisions: [bf16]

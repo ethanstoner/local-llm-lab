@@ -124,7 +124,7 @@ but its hybrid thinking mode makes throughput figures ambiguous.
 | Quality evaluation | `src/evaluation/quality.py`, `run.py` |
 | Interpretability | `src/interpretability/hooks.py`, `stats.py`, `refusal.py`, `run.py` |
 | Figures | `src/visualization/plots.py`, `render.py` |
-| Tests | `tests/` - 107 tests, CPU-only and network-free |
+| Tests | `tests/` - 109 tests, CPU-only and network-free |
 
 ### Test status
 
@@ -141,6 +141,98 @@ Two tests failed on the first run; both were faults in the tests rather than in 
 * `test_write_csv_handles_non_finite` expected a bare empty line. Python's `csv` module
   writes a lone empty field as `""` so the row is not an ambiguous blank line - the
   writer was right and the assertion was wrong. Now read back through `csv.reader`.
+
+### Problem 4: Hugging Face downloads stall the same way pip did
+
+`snapshot_download` of the 1.5B model hung at 608 MB of 3.1 GB. Installing `hf_xet`
+and retrying hung at the same place. Progress went 11 MB, then 159 MB, then 608 MB,
+then nothing for over a minute with no error.
+
+Same diagnosis as Problem 2, and now with a second data point: it is Python's HTTP
+stack on this machine, not any particular CDN. A ranged .NET `HttpWebRequest` against
+`huggingface.co` sustained 7.86 MB/s on the same file that `huggingface_hub` could not
+finish.
+
+**Fix:** `scripts/fetch_model.ps1` downloads a repository's files with the resumable
+ranged downloader, and `ModelConfig` gained a `local_path` field so `from_pretrained`
+reads from disk. `model.id` is still what gets recorded in run metadata, so provenance
+is unaffected, and `_fetch_metadata.json` in each model directory records the resolved
+commit. Both models then downloaded cleanly:
+
+```
+Qwen2.5-1.5B-Instruct  7 files, 2.89 GB, commit 989aa7980e4cf806f80c7fef2b1adb7bc71aa306
+Qwen2.5-7B-Instruct   10 files, 14.19 GB
+```
+
+`scripts/fetch_datasets.ps1` does the same for the two JailbreakBench CSVs (44 KB), so
+the refusal analysis reads its prompts from disk and cannot be perturbed by a download
+stalling partway through a run.
+
+### Problem 5: 8 MiB of cuBLAS workspace pinned 2946 MiB of VRAM
+
+Found by the smoke run. After the sweep unloaded a 2944 MiB model, the log said the
+device still held 4560 MiB against a 1528 MiB baseline - nothing had been freed.
+
+Released in isolation the same model came back cleanly, so the first hypothesis was a
+lingering Python reference. Instrumentation said otherwise:
+
+```
+allocated_mib  8.1
+reserved_mib   2946.0
+live cuda tensors (gc-tracked): 0
+```
+
+Nothing referenced from Python, but 8.1 MiB still allocated. That is cuBLAS's per-stream
+workspace. It is allocated *through PyTorch's caching allocator* and held by C++, and the
+allocator can only return a segment to the driver when the whole segment is free - so a
+few megabytes pinned gigabytes.
+
+**Fix:** `src/monitoring/memory.py` calls `torch._C._cuda_clearCublasWorkspaces()` before
+`empty_cache()`. Reserved memory then drops to 0 and the device returns to baseline plus
+the ~84 MiB CUDA context, which cannot be freed while the process lives.
+
+This would have OOM'd the precision sweep on its second precision while appearing to
+have released the first. Two regression tests now cover it.
+
+### Pipeline validation before the real runs
+
+Rather than discover problems during a 40-minute sweep, each pipeline was exercised on
+the 1.5B model first.
+
+**All five precisions load and run** (1.5B, 256-token context, 1 repeat):
+
+| precision | decode tok/s | TTFT ms | weights MiB | peak MiB |
+|---|---|---|---|---|
+| fp32 | 51.5 | 34.8 | 5889 | 9247 |
+| bf16 | 50.8 | 25.5 | 2944 | 6169 |
+| fp16 | 47.5 | 25.1 | 2944 | 6203 |
+| nf4 | 34.4 | 39.8 | 1070 | 4693 |
+| int8 | 11.7 | 109.8 | 1695 | 4981 |
+
+bitsandbytes works on Windows here, and the device returned to ~1.6 GiB between every
+precision. The int8 result is not a bug: LLM.int8()'s mixed-precision decomposition is
+known to be slow, and at this model size the card is not yet bandwidth-bound, so fp32
+being the fastest is consistent rather than surprising. These are smoke numbers on the
+wrong model and are not reported as results.
+
+**The interpretability pipeline runs end to end.** On the 1.5B model with the bundled
+prompts: refusal rate 15/16 on the harmful set against 1/16 on the harmless set, 28
+layers analysed, separation rising sharply between layers 8 and 19. The behavioural
+precondition holds, so the direction is measuring something real.
+
+**The figure pipeline produces 10 figures** and each was opened and inspected. One layout
+bug was found and fixed: the peak-layer annotation overflowed the axes when the peak sat
+near the right edge.
+
+### Problem 6: prefill would have OOM'd at 16k context
+
+Caught by reading rather than by running. `measure_prefill` called the model directly,
+and a plain forward pass computes logits for *every* prompt position. At 16384 tokens
+with Qwen's 152k vocabulary that is a ~5 GiB tensor on top of 15 GiB of weights.
+
+**Fix:** pass `logits_to_keep=1`. `generate` already does this internally, so the change
+also makes the dedicated prefill timing comparable to the TTFT measured inside
+`generate` rather than systematically slower than it.
 
 ---
 

@@ -19,6 +19,16 @@ VALID_PRECISIONS = ("fp32", "fp16", "bf16", "int8", "nf4", "fp4")
 #: How per-prompt activations are reduced to a single vector.
 VALID_AGGREGATIONS = ("last_token", "mean")
 
+#: Attention backends a config may request. ``auto`` resolves per torch build - see
+#: :mod:`src.models.attention` for why that matters on Windows.
+VALID_ATTN_IMPLEMENTATIONS = (
+    "auto",
+    "sdpa",
+    "sdpa_no_gqa",
+    "eager",
+    "flash_attention_2",
+)
+
 T = TypeVar("T")
 
 
@@ -54,10 +64,10 @@ class ModelConfig:
     local_path: str | None = None
 
     def __post_init__(self) -> None:
-        if self.attn_implementation not in ("sdpa", "eager", "flash_attention_2"):
+        if self.attn_implementation not in VALID_ATTN_IMPLEMENTATIONS:
             raise ConfigError(
-                f"model.attn_implementation must be sdpa|eager|flash_attention_2, "
-                f"got {self.attn_implementation!r}"
+                f"model.attn_implementation must be one of "
+                f"{list(VALID_ATTN_IMPLEMENTATIONS)}, got {self.attn_implementation!r}"
             )
 
     def resolve_source(self) -> tuple[str, bool]:
