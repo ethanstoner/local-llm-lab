@@ -208,10 +208,14 @@ differs. The pipeline measures the model's refusal rate on both classes before a
 anything. The classifier is substring matching over the opening of the completion - the
 same crude approach the original paper uses - so reported rates are a lower bound.
 
-**Where this stops.** Measurement only. A direction that separates two prompt classes is
-correlational evidence; establishing that the model *uses* it requires intervention -
-ablating the direction or steering along it - which is deliberately not implemented
-here. Completions to harmful prompts are classified and discarded, never stored.
+**Padding must actually be masked.** Capture runs prompts in left-padded batches of
+eight, which is only correct if the attention backend receives the padding mask. For
+this project's custom backends it originally did not (section 8). The Phase 5 results
+in this repository were re-run after the fix.
+
+**Observation is not the end.** A direction that separates two prompt classes is
+correlational evidence. Phase 6 (section 11) tests whether the model uses it.
+Completions to harmful prompts are classified and discarded, never stored.
 
 ---
 
@@ -238,3 +242,126 @@ A cell's `status` is one of:
 
 Nothing is dropped silently and nothing is estimated. A figure is only drawn from cells
 with `status: ok`.
+
+---
+
+## 8. Custom attention backends need two registrations
+
+Transformers looks up an attention *function* and an attention *mask builder* in two
+separate registries, both keyed by `attn_implementation`. For a name missing from the
+mask registry, `masking_utils` concludes the backend needs no mask and passes `None`.
+Registering only the function therefore silently drops the padding mask: in a
+left-padded batch, real tokens attend to pad tokens. On a small Llama this moved a
+padded prompt's last-token logits by up to 0.25 relative to the same prompt run alone;
+under `eager` and stock `sdpa` the difference is exactly zero.
+
+Batch-size-1 benchmarks never have padding and were unaffected. Every batched forward
+pass was: Phase 2's prompt-level quality metrics, Phase 5's activation capture and the
+refusal behaviour check. All three were re-run. The fix registers the stock SDPA mask
+builder under each custom name, in the class-level mapping that `masking_utils`
+actually reads.
+
+The existing unit test called the attention function with an explicit mask and passed
+throughout. It exercised a code path the model never takes.
+
+---
+
+## 9. Comparing two implementations: paired and order-balanced
+
+Two separate sweeps are not a comparison on a desktop machine. The same bf16 cell
+measured 35.5 tok/s in one sweep and 44.8 in another, hours apart, with other
+applications holding the GPU and CPU to different degrees. Any backend difference
+smaller than that drift is invisible, and any larger one is unreliable.
+
+`src/benchmarks/interleaved.py` loads the model once and switches the attention backend
+in place between measurements (`set_attn_implementation` verifies that every attention
+module shares the config it changes). Every round visits every cell, and the order of
+the arms alternates each round - A then B, then B then A - so a slow drift penalises
+both equally. The reported effect is the **median of per-round paired ratios**, with
+their range; each ratio compares two measurements taken seconds apart.
+
+Cells where the device's memory reached 97% of capacity are flagged as possible paging
+(section 2) and excluded from analysis rather than reported as slow.
+
+---
+
+## 10. Decode fidelity, and the roofline
+
+**Fidelity is measured by teacher-forced KL against a float32 reference.** Two attention
+kernels that differ only in summation order produce the same text for a while and then
+diverge - the effect Phase 2 found between fp16 and bf16 - so exact token agreement
+mostly measures how long numerical noise takes to flip one argmax. Instead, each backend
+prefills the same prompt and is then fed the same 64-token continuation one step at a
+time through its KV cache, and the next-token distribution at every step is compared
+with an `fp32_reference` backend that performs decode-step attention entirely in
+float32. Comparing both candidates with the reference, rather than with each other,
+says which one is wrong when they disagree.
+
+This caught a real defect. The first version of the grouped decode path rounded
+attention scores to bf16, as transformers' eager attention does. Its KL to the
+reference averaged 0.09-0.14 nats with single steps above 8 nats - 100 to 1000 times
+the SDPA kernel's. Qwen2.5's attention logits are large enough that bf16 cannot place
+them within a softmax temperature of the right value (near 500, adjacent bf16 values
+are 2.0 apart). The scores are now computed in float32, and a regression test built on
+exactly that case fails on the old code.
+
+**The roofline uses measured ceilings, not the spec sheet.**
+`src/benchmarks/ceilings.py` measures a streaming read, a device copy, the GEMV shapes of
+Qwen2.5-7B's MLP, and a large bf16 GEMM. The decode ceiling is the slower MLP GEMV rate
+- the operation that dominates decoding - and the prefill ceiling is the GEMM rate.
+
+**Three decode traffic models.** Bytes per decode step are modelled as weights plus the
+KV cache read once (*ideal*); plus the read-and-rewrite of the whole cache that
+`DynamicCache`'s `torch.cat` performs every step (*grouped*); plus `repeat_kv`'s
+per-layer expansion by the GQA group factor (*expanded*). Dividing the measured
+bandwidth by those bytes gives a ceiling with no fitted parameters, and each measurement
+is reported as a fraction of the ceiling for the traffic its backend actually generates.
+The parameter count derived from the config reconciles with the checkpoint's recorded
+count to within the biases and norms, which the tests check.
+
+---
+
+## 11. Causal test of the refusal direction
+
+After Arditi et al. (2024), with controls added.
+
+**Ablation (necessity).** The unit direction is projected out of the output of every
+module that writes to the residual stream - the token embedding and every attention and
+MLP sublayer - and out of every block output. Projecting the writers alone is exact in
+real arithmetic, but blocks add sublayer outputs to the stream in bf16, and in a model
+whose residual stream carries a few dimensions in the thousands that rounding has a
+measurable component along the direction. The runner verifies the ablation before using
+it: the mean |cosine| between the residual stream and the direction, over every block
+and position, falls from about 0.08 to about 1e-4.
+
+**Addition (sufficiency).** A multiple of the raw class-mean difference is added to the
+output of one block, at every position.
+
+**Controls.** Three random unit directions (ablation), three random vectors of equal
+norm (addition), and directions fitted at layers where Phase 5 found no separation. A
+result only counts if the refusal direction does something its controls do not.
+
+**Choosing the layer without leaking.** The observationally best layer need not be the
+causally best one. Among source layers whose ablation keeps corpus perplexity within 5%
+of the intact model, the one leaving the lowest refusal rate on the JailbreakBench
+held-out split is selected. The bundled prompt set, written independently and never
+used for fitting or selection, is then an untouched test of that choice.
+
+**The split is enforced.** The runner rebuilds Phase 5's train/test split from its own
+config and refuses to start if the seed, prompt counts, sources, precision or model
+differ from those Phase 5 recorded - otherwise "held-out" prompts could be ones the
+direction was fitted on.
+
+**Fluency.** Removing refusal by breaking the network would be meaningless, so every
+condition's completions are scored for per-token negative log-likelihood by two models,
+always with the hooks removed: the intact subject model, which is biased (its own greedy
+output is by construction its most likely text, so any change scores worse), and an
+independent judge sharing the tokenizer. Capability is also measured directly: corpus
+perplexity, teacher-forced agreement and next-token KL on harmless prompts, with each
+ablation active.
+
+**What is kept.** Interventions are forward hooks, removed when each condition ends.
+Nothing is written to the weights, and no modified weights or fitted directions are
+published (`*.safetensors` is ignored). Harmful-prompt completions are held in memory
+only long enough to classify and score them; only counts and summary statistics are
+written. Example openings are kept only for harmless prompts.
