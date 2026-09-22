@@ -105,3 +105,13 @@ def test_timing_dict_has_no_nans() -> None:
     payload = make_timing(inter_token_latency_ms=[]).to_dict()
     assert payload["itl_p50_ms"] is None
     assert all(not (isinstance(v, float) and math.isnan(v)) for v in payload.values())
+
+
+def test_paging_suspected_threshold() -> None:
+    from src.monitoring.memory import paging_suspected
+
+    assert paging_suspected(24054.0, 24564.0) is True   # the batch-64 cell
+    assert paging_suspected(20334.0, 24564.0) is False  # batch 32
+    assert paging_suspected(None, 24564.0) is False
+    assert paging_suspected(20000.0, None) is False
+    assert paging_suspected(20000.0, 24564.0, threshold=0.8) is True

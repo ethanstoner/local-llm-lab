@@ -26,7 +26,7 @@ from src.models.loader import LoadedModel, load_model
 from src.models.oom import oom_guard, release_memory
 from src.models.registry import supported_precisions
 from src.monitoring.gpu import GpuSampler
-from src.monitoring.memory import allocator_snapshot, reset_peak_stats
+from src.monitoring.memory import allocator_snapshot, paging_suspected, reset_peak_stats
 from src.utils.config import LabConfig
 from src.utils.io import write_csv
 from src.utils.logging import get_logger
@@ -137,6 +137,11 @@ def _run_cell(
 
         cell.telemetry = sampler.summary()
         cell.telemetry["allocator_peak"] = allocator_snapshot(device_index)
+        cell.telemetry["paging_suspected"] = paging_suspected(
+            cell.telemetry.get("peak_memory_used_mib"), cell.telemetry.get("memory_total_mib")
+        )
+        if cell.telemetry["paging_suspected"]:
+            logger.warning("%s reached the paging zone; its timings are not the model's speed", label)
         rows = sampler.to_rows()
         if rows:
             path = _telemetry_path(run_dir, loaded.precision, context_length)

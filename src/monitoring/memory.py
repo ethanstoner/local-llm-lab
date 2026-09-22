@@ -113,3 +113,23 @@ def device_memory(device: int = 0) -> dict[str, float | None]:
 def memory_report(device: int = 0) -> dict[str, Any]:
     """Return both allocator and driver views of memory in one block."""
     return {"allocator": allocator_snapshot(device), "device": device_memory(device)}
+
+
+#: Fraction of device memory at which a run is treated as possibly paging.
+PAGING_THRESHOLD = 0.97
+
+
+def paging_suspected(
+    peak_device_mib: float | None, total_mib: float | None, threshold: float = PAGING_THRESHOLD
+) -> bool:
+    """Whether a run's peak device memory reached the point where Windows pages VRAM.
+
+    On this platform the driver does not raise out-of-memory: it moves VRAM to host memory
+    and the run continues 20-60x slower. A measurement taken in that state is not the
+    configuration's speed, so it is flagged rather than reported. Missing inputs return
+    False; the telemetry that would justify a flag is absent.
+    """
+    if not peak_device_mib or not total_mib:
+        return False
+    return peak_device_mib >= threshold * total_mib
+
