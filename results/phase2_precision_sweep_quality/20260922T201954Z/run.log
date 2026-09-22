@@ -1,0 +1,26 @@
+13:19:54 | INFO    | src.utils.seed               | Seeded with 1234; deterministic algorithms NOT requested
+13:19:55 | INFO    | src.utils.datasets           | Loaded 32 harmful and 32 harmless prompts from bundled
+13:19:55 | INFO    | __main__                     | Evaluating with 32 fixed prompts
+13:19:55 | DEBUG   | src.models.attention         | Registered attention implementation 'sdpa_no_gqa'
+13:19:55 | DEBUG   | src.models.attention         | Registered attention implementation 'sdpa_grouped_decode'
+13:19:55 | DEBUG   | src.models.attention         | Registered attention implementation 'fp32_reference'
+13:19:55 | DEBUG   | src.models.attention         | flash attention unavailable: No available kernel. Aborting execution.
+13:19:55 | INFO    | src.models.loader            | attn_implementation=auto resolved to 'sdpa_grouped_decode'
+13:19:55 | INFO    | src.models.loader            | Loading Qwen/Qwen2.5-7B-Instruct at bf16 (bfloat16; the reference precision for this project.) onto cuda:0 from local files
+13:19:55 | DEBUG   | src.monitoring.gpu           | GPU sampling disabled by config
+13:20:02 | INFO    | src.models.loader            | Loaded in 7.14s | weights 14526 MiB | device idle 16142 MiB (baseline 1528 MiB)
+13:20:02 | INFO    | __main__                     | Reference bf16 loaded; computing artifacts
+13:20:10 | INFO    | src.models.loader            | attn_implementation=auto resolved to 'sdpa_grouped_decode'
+13:20:10 | INFO    | src.models.loader            | Loading Qwen/Qwen2.5-7B-Instruct at fp16 (IEEE half precision.) onto cuda:0 from local files
+13:20:10 | DEBUG   | src.monitoring.gpu           | GPU sampling disabled by config
+13:20:16 | INFO    | src.models.loader            | Loaded in 6.57s | weights 14526 MiB | device idle 16272 MiB (baseline 1612 MiB)
+13:20:24 | DEBUG   | bitsandbytes.cextension      | Loading bitsandbytes native library from: C:\Users\ethan\Desktop\Coding Projects\local-llm-lab\venv\Lib\site-packages\bitsandbytes\libbitsandbytes_cuda124.dll
+13:20:26 | INFO    | src.models.loader            | attn_implementation=auto resolved to 'sdpa_grouped_decode'
+13:20:26 | INFO    | src.models.loader            | Loading Qwen/Qwen2.5-7B-Instruct at int8 (bitsandbytes LLM.int8() mixed-precision decomposition.) onto cuda:0 from local files
+13:20:26 | DEBUG   | src.monitoring.gpu           | GPU sampling disabled by config
+13:20:35 | INFO    | src.models.loader            | Loaded in 8.57s | weights 8303 MiB | device idle 10448 MiB (baseline 1618 MiB)
+13:21:01 | INFO    | src.models.loader            | attn_implementation=auto resolved to 'sdpa_grouped_decode'
+13:21:01 | INFO    | src.models.loader            | Loading Qwen/Qwen2.5-7B-Instruct at nf4 (bitsandbytes 4-bit NormalFloat with double quantization.) onto cuda:0 from local files
+13:21:01 | DEBUG   | src.monitoring.gpu           | GPU sampling disabled by config
+13:21:09 | INFO    | src.models.loader            | Loaded in 8.34s | weights 5191 MiB | device idle 8438 MiB (baseline 1626 MiB)
+13:21:22 | INFO    | __main__                     | Quality comparison complete. Results in C:\Users\ethan\Desktop\Coding Projects\local-llm-lab\results\phase2_precision_sweep_quality\20260922T201954Z

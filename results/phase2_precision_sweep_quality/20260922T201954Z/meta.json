@@ -1,6 +1,6 @@
 {
   "experiment": "phase2_precision_sweep_quality",
-  "timestamp_utc": "2026-09-22T16:37:11+00:00",
+  "timestamp_utc": "2026-09-22T20:19:54+00:00",
   "host": {
     "platform": "Windows-11-10.0.26200-SP0",
     "processor": "AMD64 Family 26 Model 68 Stepping 0, AuthenticAMD",
@@ -31,7 +31,7 @@
     "nvidia-ml-py": "13.610.43"
   },
   "git": {
-    "commit": "f22c30945dd3c45a4624c5636776f28819464767",
+    "commit": "7e88028bfcf0ff365b964ef19be2e45adb1d4629",
     "dirty": true,
     "branch": "main"
   },
@@ -97,6 +97,35 @@
       "refusal_check_max_new_tokens": 24,
       "refusal_check_n_prompts": 32
     },
+    "intervention": {
+      "direction_run": "latest",
+      "direction_experiment": "phase5_refusal_direction",
+      "target_layer": null,
+      "source_layers": [],
+      "n_random_controls": 3,
+      "addition_coefficients": [
+        1.0
+      ],
+      "max_new_tokens": 32,
+      "batch_size": 8,
+      "include_bundled_prompts": true,
+      "measure_capability": true,
+      "max_perplexity_ratio": 1.05,
+      "judge_model_id": null,
+      "judge_local_path": null
+    },
+    "comparison": {
+      "backends": [
+        "sdpa_no_gqa"
+      ],
+      "batch_sizes": [
+        1
+      ],
+      "rounds": 3,
+      "paging_threshold": 0.97,
+      "fidelity_steps": 0,
+      "fidelity_reference": null
+    },
     "source_path": "configs\\precision_sweep.yaml"
   },
   "determinism": {
@@ -108,5 +137,5 @@
     "cublas_workspace_config": null,
     "warnings": []
   },
-  "run_dir": "C:\\Users\\ethan\\Desktop\\Coding Projects\\local-llm-lab\\results\\phase2_precision_sweep_quality\\20260922T163711Z"
+  "run_dir": "C:\\Users\\ethan\\Desktop\\Coding Projects\\local-llm-lab\\results\\phase2_precision_sweep_quality\\20260922T201954Z"
 }

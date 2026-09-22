@@ -1,0 +1,163 @@
+{
+  "experiment": "phase5_refusal_direction",
+  "timestamp_utc": "2026-09-22T20:06:26+00:00",
+  "host": {
+    "platform": "Windows-11-10.0.26200-SP0",
+    "processor": "AMD64 Family 26 Model 68 Stepping 0, AuthenticAMD",
+    "python_version": "3.12.10",
+    "python_executable": "C:\\Users\\ethan\\Desktop\\Coding Projects\\local-llm-lab\\venv\\Scripts\\python.exe"
+  },
+  "gpu": {
+    "available": true,
+    "index": 0,
+    "name": "NVIDIA GeForce RTX 4090",
+    "compute_capability": "8.9",
+    "total_memory_mib": 24563.5,
+    "multi_processor_count": 128,
+    "free_memory_mib_before_load": 23036.0,
+    "used_by_other_processes_mib": 1527.5,
+    "cuda_runtime": "12.4",
+    "cudnn_version": 90100,
+    "driver_version": "610.88"
+  },
+  "packages": {
+    "torch": "2.6.0+cu124",
+    "transformers": "4.57.0",
+    "accelerate": "1.12.0",
+    "bitsandbytes": "0.49.0",
+    "safetensors": "0.7.0",
+    "numpy": "2.2.6",
+    "datasets": "4.5.0",
+    "nvidia-ml-py": "13.610.43"
+  },
+  "git": {
+    "commit": "503c33cc07c07a3ffb9343554122267cfde6bb0b",
+    "dirty": true,
+    "branch": "main"
+  },
+  "config": {
+    "experiment": {
+      "name": "phase5_refusal_direction",
+      "seed": 1234,
+      "output_root": "results",
+      "notes": "Direction fitted on a training split and evaluated on a held-out split, so the reported separation is not the training objective read back to itself.\n",
+      "deterministic": true
+    },
+    "model": {
+      "id": "Qwen/Qwen2.5-7B-Instruct",
+      "revision": "main",
+      "trust_remote_code": false,
+      "attn_implementation": "auto",
+      "tokenizer_id": null,
+      "local_path": "models/Qwen2.5-7B-Instruct"
+    },
+    "benchmark": {
+      "precisions": [
+        "bf16"
+      ],
+      "context_lengths": [
+        128,
+        512,
+        2048
+      ],
+      "max_new_tokens": 128,
+      "repeats": 3,
+      "warmup": 1,
+      "batch_size": 1
+    },
+    "monitoring": {
+      "enabled": true,
+      "sample_interval_s": 0.1
+    },
+    "evaluation": {
+      "reference_precision": "bf16",
+      "compare_precisions": [
+        "int8",
+        "nf4"
+      ],
+      "n_prompts": 32,
+      "max_new_tokens": 64,
+      "perplexity_tokens": 4096,
+      "perplexity_stride": 512
+    },
+    "interpretability": {
+      "precision": "bf16",
+      "layers": "all",
+      "aggregation": "last_token",
+      "n_prompts_per_class": 100,
+      "test_fraction": 0.3,
+      "save_activations": true,
+      "harmful_source": "jbb",
+      "harmless_source": "jbb",
+      "run_refusal_behaviour_check": true,
+      "refusal_check_max_new_tokens": 24,
+      "refusal_check_n_prompts": 40
+    },
+    "intervention": {
+      "direction_run": "latest",
+      "direction_experiment": "phase5_refusal_direction",
+      "target_layer": null,
+      "source_layers": [],
+      "n_random_controls": 3,
+      "addition_coefficients": [
+        1.0
+      ],
+      "max_new_tokens": 32,
+      "batch_size": 8,
+      "include_bundled_prompts": true,
+      "measure_capability": true,
+      "max_perplexity_ratio": 1.05,
+      "judge_model_id": null,
+      "judge_local_path": null
+    },
+    "comparison": {
+      "backends": [
+        "sdpa_no_gqa"
+      ],
+      "batch_sizes": [
+        1
+      ],
+      "rounds": 3,
+      "paging_threshold": 0.97,
+      "fidelity_steps": 0,
+      "fidelity_reference": null
+    },
+    "source_path": "configs\\refusal.yaml"
+  },
+  "determinism": {
+    "seed": 1234,
+    "requested_deterministic": true,
+    "deterministic_algorithms": true,
+    "cudnn_deterministic": true,
+    "cudnn_benchmark": false,
+    "cublas_workspace_config": ":4096:8",
+    "warnings": []
+  },
+  "prompt_sets": {
+    "n_harmful": 100,
+    "n_harmless": 100,
+    "source": {
+      "kind": "jbb",
+      "via": "local_csv",
+      "dataset": "JailbreakBench/JBB-Behaviors",
+      "files": [
+        "harmful-behaviors.csv",
+        "benign-behaviors.csv"
+      ],
+      "column": "Goal",
+      "citation": "Chao et al. 2024, arXiv:2404.01318",
+      "n_available_harmful": 100,
+      "n_available_harmless": 100,
+      "n_used_per_class": 100
+    }
+  },
+  "splits": {
+    "harmful_train": 70,
+    "harmful_test": 30,
+    "harmless_train": 70,
+    "harmless_test": 30
+  },
+  "run_dir": "C:\\Users\\ethan\\Desktop\\Coding Projects\\local-llm-lab\\results\\phase5_refusal_direction\\20260922T200626Z",
+  "scope": "Measurement only. No weight modification, directional ablation or activation steering is performed.",
+  "reference": "Arditi et al. 2024, 'Refusal in Language Models Is Mediated by a Single Direction', arXiv:2406.11717"
+}

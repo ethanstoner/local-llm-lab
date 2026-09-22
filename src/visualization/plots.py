@@ -768,38 +768,54 @@ def _rate_bars(
 
 
 def intervention_overview(payload: Mapping[str, Any], path: Path, subtitle: str = "") -> Path | None:
-    """Necessity and sufficiency side by side, each against its controls."""
+    """Necessity and sufficiency side by side, each against its controls.
+
+    Necessity shows three layers' directions: Phase 5's observational pick, the
+    selection rule's pick, and the cheapest layer that brings refusal to 5% or below
+    (lowest corpus perplexity among them) - each labelled with why it is there.
+    Sufficiency shows the whole addition dose at the observational layer.
+    """
     pooled = payload.get("pooled") or {}
     harmful, harmless = pooled.get("harmful"), pooled.get("harmless")
     selection = payload.get("selection") or {}
     if not harmful or not harmless:
         return None
-    target = selection.get("observational_layer")
-    causal = selection.get("causal_layer")
-    layers = [layer for layer in dict.fromkeys([causal, target]) if layer is not None]
+    observed = selection.get("observational_layer")
+    picked = selection.get("causal_layer")
+
+    sweep = payload.get("layer_sweep") or []
+    effective = [r for r in sweep if r.get("harmful_refusal_rate") is not None
+                 and r["harmful_refusal_rate"] <= 0.05 and r.get("perplexity_ratio") is not None]
+    cheapest = min(effective, key=lambda r: r["perplexity_ratio"])["source_layer"] if effective else None
+
+    reasons: dict[int, list[str]] = {}
+    for layer, why in ((cheapest, "cheapest to reach <=5%"), (observed, "Phase 5 best separation"),
+                       (picked, "selection rule's pick")):
+        if layer is not None:
+            reasons.setdefault(layer, []).append(why)
 
     necessity = [("no intervention", harmful["baseline"], BASELINE_COLOR)]
-    for layer in layers:
-        tag = "causal pick" if layer == causal else "observational pick"
-        necessity.append((f"ablate layer {layer} direction\n({tag})", harmful[f"ablate:L{layer}"], INTERVENTION_COLOR))
-    randoms = sorted(k for k in harmful if k.startswith("ablate:random"))
-    for key in randoms:
+    for layer, why in reasons.items():
+        necessity.append((f"ablate layer {layer} direction\n({'; '.join(why)})", harmful[f"ablate:L{layer}"],
+                          INTERVENTION_COLOR))
+    for key in sorted(k for k in harmful if k.startswith("ablate:random")):
         necessity.append((f"ablate random direction {key[-1]}", harmful[key], CONTROL_COLOR))
-    low_signal = [k for k in harmful if k.startswith("ablate:L") and int(k[8:]) <= 4]
-    for key in sorted(low_signal, key=lambda k: int(k[8:]))[:1]:
-        necessity.append((f"ablate layer {key[8:]} direction\n(no Phase 5 signal)", harmful[key], CONTROL_COLOR))
+    low_signal = sorted((k for k in harmful if k.startswith("ablate:L") and int(k[8:]) <= 4), key=lambda k: int(k[8:]))
+    if low_signal:
+        key = low_signal[0]
+        necessity.append((f"ablate layer {key[8:]} direction\n(weakest Phase 5 signal)", harmful[key], CONTROL_COLOR))
 
     sufficiency = [("no intervention", harmless["baseline"], BASELINE_COLOR)]
-    for layer in layers:
-        key = f"add:L{layer}x1"
-        if key in harmless:
-            sufficiency.append((f"add layer {layer} direction", harmless[key], INTERVENTION_COLOR))
-        for rkey in sorted(k for k in harmless if k.startswith(f"add:L{layer}random")):
-            sufficiency.append((f"add random vector, layer {layer}\n(same norm)", harmless[rkey], CONTROL_COLOR))
-            break
+    doses = sorted((k for k in harmless if k.startswith(f"add:L{observed}x")), key=lambda k: float(k.split("x")[-1]))
+    for key in doses:
+        c = float(key.split("x")[-1])
+        if c >= 1.0:
+            sufficiency.append((f"add layer {observed} direction x{c:g}", harmless[key], INTERVENTION_COLOR))
+    for key in sorted(k for k in harmless if k.startswith(f"add:L{observed}random")):
+        sufficiency.append((f"add random vector {key.split('random')[1][0]}\n(same norm as x1)", harmless[key], CONTROL_COLOR))
 
     height = 0.55 * max(len(necessity), len(sufficiency)) + 1.6
-    fig, axes = plt.subplots(1, 2, figsize=(12.0, height))
+    fig, axes = plt.subplots(1, 2, figsize=(12.6, height))
     _rate_bars(axes[0], necessity, "Necessity: refusal on harmful prompts")
     _rate_bars(axes[1], sufficiency, "Sufficiency: refusal on harmless prompts")
     fig.suptitle("Removing the direction stops refusal; adding it induces refusal",
@@ -843,6 +859,7 @@ def intervention_layer_sweep(rows: Sequence[Mapping[str, Any]], selection: Mappi
             axes[2].annotate(f"selection budget (+{(budget - 1) * 100:.0f}%)", xy=(x[0], (budget - 1) * 100),
                              xytext=(2, 4), textcoords="offset points", fontsize=8, color=TEXT_SECONDARY)
         axes[2].set_yscale("symlog", linthresh=1.0)
+        axes[2].yaxis.set_major_formatter(FuncFormatter(lambda v, _: f"{v:+.0f}%" if v else "0%"))
     axes[2].set_ylabel("perplexity change (%)")
     axes[2].set_xlabel("layer the direction was fitted at")
     axes[2].set_title("Cost: corpus perplexity with that direction ablated")
@@ -854,8 +871,8 @@ def intervention_layer_sweep(rows: Sequence[Mapping[str, Any]], selection: Mappi
                 ax.axvline(layer, color=GRID, linewidth=6, zorder=0, linestyle=style)
         _despine(ax)
     if causal is not None:
-        axes[1].annotate(f"causal pick: {causal}", xy=(causal, 100), xytext=(4, -10),
-                         textcoords="offset points", fontsize=8.5, color=TEXT_PRIMARY)
+        axes[1].annotate(f"selection rule's pick: {causal}", xy=(causal, 100), xytext=(-8, -4),
+                         textcoords="offset points", ha="right", fontsize=8.5, color=TEXT_PRIMARY)
     if observed is not None and observed != causal:
         axes[0].annotate(f"observational pick: {observed}", xy=(observed, max(r["phase5_test_cohens_d"] for r in usable)),
                          xytext=(-4, -2), textcoords="offset points", ha="right", fontsize=8.5, color=TEXT_PRIMARY)
