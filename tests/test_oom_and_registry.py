@@ -50,9 +50,8 @@ def test_oom_guard_leaves_success_alone() -> None:
 
 def test_oom_guard_reraises_real_bugs() -> None:
     """A genuine bug must not be filed away as an experimental result."""
-    with pytest.raises(ValueError, match="a real bug"):
-        with oom_guard("unit-test"):
-            raise ValueError("a real bug")
+    with pytest.raises(ValueError, match="a real bug"), oom_guard("unit-test"):
+        raise ValueError("a real bug")
 
 
 def test_oom_guard_can_swallow_non_oom_when_asked() -> None:

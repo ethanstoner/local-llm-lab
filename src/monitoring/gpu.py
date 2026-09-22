@@ -92,7 +92,7 @@ class GpuSampler:
 
     # -- lifecycle ---------------------------------------------------------------
 
-    def __enter__(self) -> "GpuSampler":
+    def __enter__(self) -> GpuSampler:
         self.start()
         return self
 
@@ -245,7 +245,7 @@ class TelemetryBundle:
     markers: list[dict[str, Any]] = field(default_factory=list)
 
     @classmethod
-    def from_sampler(cls, sampler: GpuSampler) -> "TelemetryBundle":
+    def from_sampler(cls, sampler: GpuSampler) -> TelemetryBundle:
         """Snapshot a sampler into a serialisable bundle."""
         return cls(
             summary=sampler.summary(),

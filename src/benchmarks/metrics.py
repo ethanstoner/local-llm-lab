@@ -8,8 +8,9 @@ without reading the timing logic.
 from __future__ import annotations
 
 import statistics
+from collections.abc import Sequence
 from dataclasses import dataclass, field
-from typing import Any, Sequence
+from typing import Any
 
 
 def _percentile(values: Sequence[float], q: float) -> float | None:

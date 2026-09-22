@@ -25,7 +25,8 @@ import argparse
 import logging
 import statistics
 import sys
-from typing import Any, Callable, Sequence
+from collections.abc import Callable, Sequence
+from typing import Any
 
 import torch
 
@@ -82,14 +83,14 @@ def measure(device: int = 0, read_gib: float = 2.0, repeats: int = 20) -> dict[s
     results["stream_read"] = {
         "bytes": nbytes,
         "unit": "GB/s",
-        **_summary(time_cuda(lambda: big.sum(dtype=torch.float32), repeats), nbytes, 1e9),
+        **_summary(time_cuda(lambda t=big: t.sum(dtype=torch.float32), repeats), nbytes, 1e9),
     }
 
     dst = torch.empty_like(big)
     results["device_copy"] = {
         "bytes_moved": 2 * nbytes,
         "unit": "GB/s",
-        **_summary(time_cuda(lambda: dst.copy_(big), repeats), 2 * nbytes, 1e9),
+        **_summary(time_cuda(lambda d=dst, t=big: d.copy_(t), repeats), 2 * nbytes, 1e9),
     }
     del dst, big
     torch.cuda.empty_cache()
@@ -106,7 +107,9 @@ def measure(device: int = 0, read_gib: float = 2.0, repeats: int = 20) -> dict[s
         gemv[label] = {
             "weight_bytes": wbytes,
             "unit": "GB/s",
-            **_summary(time_cuda(lambda: torch.nn.functional.linear(x, weight), repeats * 5), wbytes, 1e9),
+            **_summary(
+                time_cuda(lambda x=x, w=weight: torch.nn.functional.linear(x, w), repeats * 5), wbytes, 1e9
+            ),
         }
         del weight, x
     results["gemv"] = gemv
@@ -119,7 +122,7 @@ def measure(device: int = 0, read_gib: float = 2.0, repeats: int = 20) -> dict[s
         "shape": [size, size, size],
         "flops": flops,
         "unit": "TFLOP/s",
-        **_summary(time_cuda(lambda: a @ b, repeats), flops, 1e12),
+        **_summary(time_cuda(lambda a=a, b=b: a @ b, repeats), flops, 1e12),
     }
     del a, b
     torch.cuda.empty_cache()

@@ -27,8 +27,9 @@ turn a correlational result into a causal one, and it is deliberately out of sco
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass, field
-from typing import Any, Sequence
+from typing import Any
 
 import torch
 

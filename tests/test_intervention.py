@@ -111,9 +111,8 @@ def test_hooks_are_removed_on_exit(tiny_model: LlamaForCausalLM, input_ids: torc
     with torch.no_grad():
         reference = tiny_model(input_ids=input_ids).logits.clone()
     r = random_unit_direction(HIDDEN, seed=12)
-    with DirectionalAblation(tiny_model, r):
-        with torch.no_grad():
-            changed = tiny_model(input_ids=input_ids).logits.clone()
+    with DirectionalAblation(tiny_model, r), torch.no_grad():
+        changed = tiny_model(input_ids=input_ids).logits.clone()
     with torch.no_grad():
         after = tiny_model(input_ids=input_ids).logits
     assert not torch.allclose(reference, changed)
@@ -122,9 +121,8 @@ def test_hooks_are_removed_on_exit(tiny_model: LlamaForCausalLM, input_ids: torc
 
 def test_hooks_removed_even_on_error(tiny_model: LlamaForCausalLM) -> None:
     r = random_unit_direction(HIDDEN, seed=13)
-    with pytest.raises(RuntimeError):
-        with DirectionalAblation(tiny_model, r):
-            raise RuntimeError("boom")
+    with pytest.raises(RuntimeError), DirectionalAblation(tiny_model, r):
+        raise RuntimeError("boom")
     for module in ablation_sites(tiny_model):
         assert not module._forward_hooks
 
@@ -189,10 +187,10 @@ def test_ablation_applies_during_generation(tiny_model: LlamaForCausalLM, input_
 class _ToyTokenizer:
     """Just enough tokenizer for residual_component: a fixed chat template and ids."""
 
-    def apply_chat_template(self, messages, tokenize=False, add_generation_prompt=True):  # noqa: ANN001
+    def apply_chat_template(self, messages, tokenize=False, add_generation_prompt=True):
         return messages[0]["content"]
 
-    def __call__(self, texts, return_tensors="pt", padding=True, add_special_tokens=False):  # noqa: ANN001
+    def __call__(self, texts, return_tensors="pt", padding=True, add_special_tokens=False):
         rows = [[(ord(c) % 60) + 1 for c in t] for t in texts]
         width = max(len(r) for r in rows)
         ids = torch.tensor([[0] * (width - len(r)) + r for r in rows])

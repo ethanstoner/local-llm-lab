@@ -13,8 +13,7 @@ from __future__ import annotations
 import argparse
 import logging
 import sys
-from pathlib import Path
-from typing import Sequence
+from collections.abc import Sequence
 
 from src.benchmarks.sweep import run_sweep
 from src.utils.config import ConfigError, load_config
