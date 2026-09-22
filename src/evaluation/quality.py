@@ -13,8 +13,10 @@ reference:
   agree, is a direct measure of behavioural drift.
 * **Next-token distribution divergence** - exact KL and Jensen-Shannon between the two
   models' final-position distributions on a fixed prompt set.
-* **Teacher-forced agreement and perplexity** over a fixed corpus - thousands of
-  positions rather than dozens, giving the comparison real statistical weight.
+* **Teacher-forced agreement and perplexity** over a fixed corpus - about a thousand
+  positions rather than a few dozen. It is a paired comparison over identical positions,
+  so relative differences between precisions are far better determined than the absolute
+  perplexity is.
 
 The reference is measured once and reduced to a small set of artifacts, so the two
 models are never resident on the card at the same time.
@@ -37,8 +39,8 @@ logger = get_logger(__name__)
 class TeacherForcedTrace:
     """Per-position outputs of a teacher-forced pass over a fixed corpus.
 
-    Deliberately compact: storing full vocabulary distributions for thousands of
-    positions would run to gigabytes, so only the argmax and the log-probability of the
+    Deliberately compact: storing full vocabulary distributions for every
+    position would run to gigabytes, so only the argmax and the log-probability of the
     actual next token are kept. Both are enough to compute the comparisons that matter
     and neither is an approximation.
     """
@@ -166,7 +168,7 @@ def final_position_logprobs(
     """Return ``(n_prompts, vocab)`` log-probabilities for the token after each prompt.
 
     Kept on the host in float32. For a 150k vocabulary and a few dozen prompts this is
-    tens of megabytes, which is affordable; the full corpus would not be.
+    tens of megabytes, which is affordable; one vector per corpus position would not be.
     """
     target = device or next(model.parameters()).device
     texts = _format_prompts(tokenizer, prompts, apply_chat_template)

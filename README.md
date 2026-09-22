@@ -76,7 +76,7 @@ src/
 configs/              one YAML per experiment
 results/              one self-contained directory per run
 figures/              rendered PNGs
-tests/                107 tests, CPU-only and network-free
+tests/                119 tests, CPU-only and network-free
 docs/methodology.md   the measurement decisions, in detail
 ```
 
@@ -147,7 +147,8 @@ on the card at once:
 2. **Next-token distribution divergence** - exact KL(reference ‖ candidate) and
    Jensen-Shannon over a fixed prompt set.
 3. **Teacher-forced agreement and perplexity** over a fixed corpus with a strided
-   window, giving thousands of scored positions rather than dozens.
+   window, giving ~1088 scored positions rather than the 32 the prompt comparisons use.
+   Each run records the actual count.
 
 ### Refusal direction (Phase 5)
 
