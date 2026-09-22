@@ -1,0 +1,292 @@
+{
+  "meta": {
+    "experiment": "phase2_precision_sweep_quality",
+    "timestamp_utc": "2026-09-22T16:37:11+00:00",
+    "host": {
+      "platform": "Windows-11-10.0.26200-SP0",
+      "processor": "AMD64 Family 26 Model 68 Stepping 0, AuthenticAMD",
+      "python_version": "3.12.10",
+      "python_executable": "C:\\Users\\ethan\\Desktop\\Coding Projects\\local-llm-lab\\venv\\Scripts\\python.exe"
+    },
+    "gpu": {
+      "available": true,
+      "index": 0,
+      "name": "NVIDIA GeForce RTX 4090",
+      "compute_capability": "8.9",
+      "total_memory_mib": 24563.5,
+      "multi_processor_count": 128,
+      "free_memory_mib_before_load": 23036.0,
+      "used_by_other_processes_mib": 1527.5,
+      "cuda_runtime": "12.4",
+      "cudnn_version": 90100,
+      "driver_version": "610.88"
+    },
+    "packages": {
+      "torch": "2.6.0+cu124",
+      "transformers": "4.57.0",
+      "accelerate": "1.12.0",
+      "bitsandbytes": "0.49.0",
+      "safetensors": "0.7.0",
+      "numpy": "2.2.6",
+      "datasets": "4.5.0",
+      "nvidia-ml-py": "13.610.43"
+    },
+    "git": {
+      "commit": "f22c30945dd3c45a4624c5636776f28819464767",
+      "dirty": true,
+      "branch": "main"
+    },
+    "config": {
+      "experiment": {
+        "name": "phase2_precision_sweep",
+        "seed": 1234,
+        "output_root": "results",
+        "notes": "Precision comparison at a fixed 512-token context. Quality metrics come from src.evaluation.run, which compares each quantized model against the bf16 reference.\n",
+        "deterministic": false
+      },
+      "model": {
+        "id": "Qwen/Qwen2.5-7B-Instruct",
+        "revision": "main",
+        "trust_remote_code": false,
+        "attn_implementation": "auto",
+        "tokenizer_id": null,
+        "local_path": "models/Qwen2.5-7B-Instruct"
+      },
+      "benchmark": {
+        "precisions": [
+          "bf16",
+          "fp16",
+          "int8",
+          "nf4",
+          "fp32"
+        ],
+        "context_lengths": [
+          512,
+          2048
+        ],
+        "max_new_tokens": 128,
+        "repeats": 3,
+        "warmup": 1,
+        "batch_size": 1
+      },
+      "monitoring": {
+        "enabled": true,
+        "sample_interval_s": 0.05
+      },
+      "evaluation": {
+        "reference_precision": "bf16",
+        "compare_precisions": [
+          "fp16",
+          "int8",
+          "nf4"
+        ],
+        "n_prompts": 32,
+        "max_new_tokens": 64,
+        "perplexity_tokens": 8192,
+        "perplexity_stride": 512
+      },
+      "interpretability": {
+        "precision": "bf16",
+        "layers": "all",
+        "aggregation": "last_token",
+        "n_prompts_per_class": 100,
+        "test_fraction": 0.3,
+        "save_activations": true,
+        "harmful_source": "jbb",
+        "harmless_source": "jbb",
+        "run_refusal_behaviour_check": true,
+        "refusal_check_max_new_tokens": 24,
+        "refusal_check_n_prompts": 32
+      },
+      "source_path": "configs\\precision_sweep.yaml"
+    },
+    "determinism": {
+      "seed": 1234,
+      "requested_deterministic": false,
+      "deterministic_algorithms": false,
+      "cudnn_deterministic": false,
+      "cudnn_benchmark": true,
+      "cublas_workspace_config": null,
+      "warnings": []
+    },
+    "run_dir": "C:\\Users\\ethan\\Desktop\\Coding Projects\\local-llm-lab\\results\\phase2_precision_sweep_quality\\20260922T163711Z"
+  },
+  "reference": {
+    "status": "ok",
+    "precision": "bf16",
+    "perplexity": 12.536819,
+    "n_teacher_forced_positions": 1088,
+    "n_prompts": 32,
+    "continuation_tokens": 64,
+    "load": {
+      "load_time_s": 22.9707,
+      "baseline_device_used_mib": 1527.5,
+      "peak_device_used_mib": null,
+      "idle_device_used_mib": 16141.5,
+      "device_delta_mib": 14614.0,
+      "weights_mib": 14525.6,
+      "peak_allocator_mib": 14548.0,
+      "allocator_after_load": {
+        "allocated_mib": 14529.6,
+        "reserved_mib": 14548.0,
+        "max_allocated_mib": 14529.6,
+        "max_reserved_mib": 14548.0
+      },
+      "param_count": 7615616512,
+      "dtype_histogram": {
+        "bfloat16": 7615616512
+      }
+    }
+  },
+  "comparisons": [
+    {
+      "precision": "fp16",
+      "status": "ok",
+      "reason": null,
+      "continuation_agreement": {
+        "n": 32,
+        "exact_match_rate": 0.5,
+        "mean_token_agreement": 0.812012,
+        "mean_first_divergence_index": 49.4688,
+        "max_tokens_compared": 64
+      },
+      "next_token_distribution": {
+        "n": 32,
+        "vocab_size": 152064,
+        "mean_kl_nats": 0.00059994,
+        "median_kl_nats": 0.00018366,
+        "max_kl_nats": 0.00705065,
+        "mean_js_nats": 0.00015077,
+        "top1_agreement": 1.0
+      },
+      "teacher_forced": {
+        "n_positions": 1088,
+        "top1_agreement": 0.980699,
+        "reference_perplexity": 12.536819,
+        "candidate_perplexity": 12.495255,
+        "perplexity_ratio": 0.996685,
+        "mean_target_logprob_delta": 0.00332065,
+        "mean_abs_target_logprob_delta": 0.02768567
+      },
+      "load": {
+        "load_time_s": 12.051,
+        "baseline_device_used_mib": 1609.5,
+        "peak_device_used_mib": null,
+        "idle_device_used_mib": 16269.5,
+        "device_delta_mib": 14660.0,
+        "weights_mib": 14525.6,
+        "peak_allocator_mib": 14660.0,
+        "allocator_after_load": {
+          "allocated_mib": 14530.1,
+          "reserved_mib": 14660.0,
+          "max_allocated_mib": 14603.6,
+          "max_reserved_mib": 14660.0
+        },
+        "param_count": 7615616512,
+        "dtype_histogram": {
+          "float16": 7615616512
+        }
+      }
+    },
+    {
+      "precision": "int8",
+      "status": "ok",
+      "reason": null,
+      "continuation_agreement": {
+        "n": 32,
+        "exact_match_rate": 0.09375,
+        "mean_token_agreement": 0.532227,
+        "mean_first_divergence_index": 28.25,
+        "max_tokens_compared": 64
+      },
+      "next_token_distribution": {
+        "n": 32,
+        "vocab_size": 152064,
+        "mean_kl_nats": 0.00765173,
+        "median_kl_nats": 0.0022916,
+        "max_kl_nats": 0.04799728,
+        "mean_js_nats": 0.00190481,
+        "top1_agreement": 0.96875
+      },
+      "teacher_forced": {
+        "n_positions": 1088,
+        "top1_agreement": 0.957721,
+        "reference_perplexity": 12.536819,
+        "candidate_perplexity": 12.570526,
+        "perplexity_ratio": 1.002689,
+        "mean_target_logprob_delta": -0.00268522,
+        "mean_abs_target_logprob_delta": 0.07995676
+      },
+      "load": {
+        "load_time_s": 17.7393,
+        "baseline_device_used_mib": 1617.5,
+        "peak_device_used_mib": null,
+        "idle_device_used_mib": 10447.5,
+        "device_delta_mib": 8830.0,
+        "weights_mib": 8302.6,
+        "peak_allocator_mib": 8830.0,
+        "allocator_after_load": {
+          "allocated_mib": 8308.4,
+          "reserved_mib": 8830.0,
+          "max_allocated_mib": 8539.4,
+          "max_reserved_mib": 8830.0
+        },
+        "param_count": 7615616512,
+        "dtype_histogram": {
+          "float16": 1090328064,
+          "int8": 6525288448
+        }
+      }
+    },
+    {
+      "precision": "nf4",
+      "status": "ok",
+      "reason": null,
+      "continuation_agreement": {
+        "n": 32,
+        "exact_match_rate": 0.0,
+        "mean_token_agreement": 0.351074,
+        "mean_first_divergence_index": 18.0625,
+        "max_tokens_compared": 64
+      },
+      "next_token_distribution": {
+        "n": 32,
+        "vocab_size": 152064,
+        "mean_kl_nats": 0.05835337,
+        "median_kl_nats": 0.01888908,
+        "max_kl_nats": 0.36677229,
+        "mean_js_nats": 0.01472501,
+        "top1_agreement": 0.9375
+      },
+      "teacher_forced": {
+        "n_positions": 1088,
+        "top1_agreement": 0.888787,
+        "reference_perplexity": 12.536819,
+        "candidate_perplexity": 13.1215,
+        "perplexity_ratio": 1.046637,
+        "mean_target_logprob_delta": -0.04558239,
+        "mean_abs_target_logprob_delta": 0.22558708
+      },
+      "load": {
+        "load_time_s": 17.9713,
+        "baseline_device_used_mib": 1625.5,
+        "peak_device_used_mib": null,
+        "idle_device_used_mib": 8435.5,
+        "device_delta_mib": 6810.0,
+        "weights_mib": 5191.1,
+        "peak_allocator_mib": 6810.0,
+        "allocator_after_load": {
+          "allocated_mib": 5299.7,
+          "reserved_mib": 6810.0,
+          "max_allocated_mib": 6744.0,
+          "max_reserved_mib": 6810.0
+        },
+        "param_count": 4352972288,
+        "dtype_histogram": {
+          "bfloat16": 1090328064,
+          "uint8": 3262644224
+        }
+      }
+    }
+  ]
+}

@@ -298,14 +298,114 @@ Ten tests were added, including an equivalence check against an explicit
 `softmax(QK^T/sqrt(d))V` reference, so the workaround is verified to compute the same
 thing rather than merely to run faster.
 
+### Problem 8: the renderer picked the wrong runs
+
+The first full render selected the *smoke* run - Qwen2.5-1.5B - to supply the headline
+throughput figures for a 7B experiment.
+
+`discover_runs` classified runs by which result file they held and kept whichever it
+visited last. Directories are walked in sorted order, so "last" meant the
+alphabetically-last experiment name. `smoke` sorts after `phase5_refusal_direction`.
+
+**Fix:** rank candidate runs and take the maximum, by how richly a run sweeps the axis
+the figure is about, then by timestamp. Context-sweep and precision-sweep runs are now
+tracked as separate kinds, so a two-point precision sweep cannot displace the five-point
+context sweep's curves. Figures now come from `phase1_context_sweep` and
+`phase2_precision_sweep` as intended.
+
+This one is worth dwelling on. The figures looked entirely plausible: correct axes,
+sensible curves, a provenance caption. The caption was even correct - it said
+`Qwen/Qwen2.5-1.5B-Instruct`, which is exactly the check that caught it.
+
+### All phases complete
+
+| Phase | Run | Result |
+|---|---|---|
+| 1 | `phase1_context_sweep` | 5/5 cells |
+| 2 | `phase2_precision_sweep` | 10/10 cells |
+| 2 | `phase2_precision_sweep_quality` | 3 precisions compared to bf16 |
+| 4-5 | `phase5_refusal_direction` | 28 layers, 90% vs 12.5% refusal rates |
+| 3 | `figures/` | 14 figures, each opened and inspected |
+
+Headline numbers are in README section 6. The findings that surprised me:
+
+1. **nf4 is fast and small but the least faithful.** 64% memory saving, 9% throughput
+   cost - and 4.7% higher perplexity with zero exact continuation matches. The
+   throughput table alone would have oversold it.
+2. **fp16 and bf16 disagree on half their greedy continuations** despite mean KL of
+   0.0006 nats and 100% next-token top-1 agreement. Greedy decoding amplifies numerical
+   noise until an argmax flips, after which the sequences never re-converge. Exact-match
+   rate is therefore a poor quality metric, and this project reports it next to the
+   distribution metrics rather than instead of them.
+3. **The refusal direction peaks at layer 20 of 28**, with held-out *d* = 3.59 and
+   AUROC 0.982, rising from chance at layer 10. Consistent with Arditi et al.
+4. **The train/test split was not a formality.** At layer 0 the fitting split shows
+   *d* = 0.84 against the held-out split's 0.13. With 70 examples per class in 3584
+   dimensions, a direction that separates the training data is available in pure noise.
+   Evaluating in-sample would have reported refusal structure in the embedding layer.
+
+### Figure inspection
+
+All 14 were opened and looked at, not just generated. Two layout bugs were found and
+fixed that way: the peak-layer annotation overflowed the axes when the peak sat near the
+right edge, and `bf16`/`fp16` labels printed on top of each other in the
+memory-vs-throughput scatter, since the two points nearly coincide.
+
+Two figures look sparse and are correct that way. `latency_vs_context` shows two lines
+almost exactly superimposed - that *is* the cross-check succeeding, since TTFT and the
+independently timed prefill pass agree to within 1%. `memory_over_time` is nearly flat
+within each run, because 128 generated tokens add little to a KV cache already holding
+the prompt.
+
 ---
 
-## Next steps
+## Summary
 
-1. Phase 1 sweep on Qwen2.5-7B-Instruct across 128 - 16384 token contexts.
-2. Phase 2 precision sweep including `fp32`, which is expected to OOM and should be
-   *recorded* as an OOM rather than crash the sweep.
-3. Phase 2 quality comparison against the bf16 reference.
-4. Render figures and inspect every one of them before claiming they are correct.
-5. Phase 5 refusal-direction analysis, analysis only.
-6. Finish README with measured results and limitations.
+The repository is runnable and every phase has produced measured results.
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\setup_env.ps1
+powershell -ExecutionPolicy Bypass -File .\scriptsetch_model.ps1 -Repo Qwen/Qwen2.5-7B-Instruct
+powershell -ExecutionPolicy Bypass -File .\scriptsetch_datasets.ps1
+.env\Scripts\python.exe -m pytest tests/ -q          # 119 passed
+powershell -ExecutionPolicy Bypass -File .\scriptsun_all.ps1
+```
+
+Built: a config-driven experiment harness with NVML telemetry, a precision-aware loader
+covering fp32/fp16/bf16/int8/nf4, a timing harness that separates prefill from decode and
+validates its own overhead, quantization fidelity metrics against a full-precision
+reference, residual-stream activation capture, a layer-wise refusal-direction analysis,
+and a figure renderer. 119 tests, CPU-only and network-free.
+
+Eight problems were found and fixed along the way; all are written up above. Four were
+platform traps that would have produced plausible-looking wrong numbers rather than
+errors:
+
+* cuBLAS workspaces pinning gigabytes of allocator segments after a model was unloaded.
+* `enable_gqa` forcing SDPA onto the quadratic math kernel on a build without flash
+  attention, making 8k prefill 145x slower.
+* The Windows driver paging VRAM to host memory instead of raising OOM, so an fp32 model
+  that does not fit "ran" at 1/60th speed.
+* The figure renderer selecting a 1.5B smoke run to illustrate a 7B experiment.
+
+That list is the argument for the parts of the design that look like overhead: recording
+both allocator and driver memory, probing kernels rather than trusting flags, stamping
+provenance onto every figure, and looking at the output.
+
+## Recommended next steps
+
+1. **Intervention for Phase 5.** Everything needed to ablate the layer-20 direction or
+   steer along it is in place. That converts a correlational result into a causal one,
+   and it is the obvious next experiment - to be done deliberately, with the safety
+   implications considered rather than as an afterthought.
+2. **A second architecture.** Every finding here is one model on one card. Llama-3.1-8B
+   or Gemma-2-9b would separate model-specific effects from general ones. Both are gated,
+   so they need an interactive licence acceptance first.
+3. **Batched throughput.** All measurements are batch size 1. Server-style throughput
+   with continuous batching is a different regime entirely.
+4. **A KV-cache memory model** predicted from the config and validated against the
+   measured curve in `vram_vs_context.png`.
+5. **AWQ and GPTQ** alongside the bitsandbytes modes, now that the harness makes adding
+   a precision a registry entry.
+6. **Re-run on Linux.** It would take the flash-attention path, which would quantify what
+   the `sdpa_no_gqa` workaround costs against a build that does not need it.
