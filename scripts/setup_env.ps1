@@ -113,5 +113,11 @@ Write-Output "--- test tooling ---"
 Write-Output "--- verification ---"
 & $py -c "import torch, transformers, bitsandbytes, pynvml; print('torch', torch.__version__, 'cuda', torch.version.cuda, 'available', torch.cuda.is_available()); print('transformers', transformers.__version__); print('bitsandbytes', bitsandbytes.__version__)"
 
-& $py -m pip freeze | Out-File -FilePath (Join-Path $root "requirements.lock.txt") -Encoding utf8
+# pip freeze records the locally downloaded torch wheel as a file:// URL into this
+# machine's temp directory, which nobody else can install from. Pin it by version
+# instead (installable from the cu124 index), and write without a byte-order mark.
+$lock = & $py -m pip freeze | ForEach-Object {
+    if ($_ -match '^torch @ file:') { 'torch==2.6.0+cu124' } else { $_ }
+}
+[System.IO.File]::WriteAllLines((Join-Path $root "requirements.lock.txt"), [string[]]$lock)
 Write-Output "Wrote requirements.lock.txt"
