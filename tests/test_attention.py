@@ -13,8 +13,10 @@ import pytest
 import torch
 
 from src.models.attention import (
+    CUSTOM_IMPLEMENTATIONS,
     SDPA_NO_GQA,
     backend_report,
+    grouped_decode_attention,
     flash_attention_available,
     memory_efficient_available,
     recommended_attn_implementation,
@@ -160,3 +162,90 @@ def test_no_gqa_keeps_attention_memory_linear() -> None:
     # still catch a regression to the math kernel.
     ratio = peaks[2048] / max(peaks[1024], 1)
     assert ratio < 3.0, f"attention memory grew {ratio:.1f}x for a 2x context"
+
+
+def _tiny_llama(impl: str):
+    from transformers import LlamaConfig, LlamaForCausalLM
+
+    register_attention_backends()
+    torch.manual_seed(0)
+    config = LlamaConfig(
+        vocab_size=64,
+        hidden_size=32,
+        intermediate_size=64,
+        num_hidden_layers=2,
+        num_attention_heads=4,
+        num_key_value_heads=2,
+        max_position_embeddings=64,
+    )
+    config._attn_implementation = impl
+    return LlamaForCausalLM(config).eval()
+
+
+@pytest.mark.parametrize("impl", CUSTOM_IMPLEMENTATIONS)
+def test_padded_batch_matches_prompt_alone(impl: str) -> None:
+    """Regression: custom backends used to receive no padding mask at all.
+
+    Transformers builds masks from a separate registry and passes ``None`` for any name
+    missing from it, so a left-padded prompt attended to its pad tokens. Calling the
+    attention function with an explicit mask (the test above) could never catch that;
+    only running the real model on a padded batch does.
+    """
+    model = _tiny_llama(impl)
+    short, long = [5, 9, 13], [7, 11, 15, 19, 23, 27, 31]
+    pad = len(long) - len(short)
+    ids = torch.tensor([[0] * pad + short, long])
+    mask = torch.tensor([[0] * pad + [1] * len(short), [1] * len(long)])
+    with torch.no_grad():
+        alone = model(input_ids=torch.tensor([short])).logits[0, -1]
+        batched = model(input_ids=ids, attention_mask=mask).logits[0, -1]
+    assert torch.allclose(alone, batched, atol=1e-5)
+
+
+def _reference_decode(query, key, value, additive_mask=None):
+    groups = query.shape[1] // key.shape[1]
+    k_full = key.repeat_interleave(groups, dim=1)
+    v_full = value.repeat_interleave(groups, dim=1)
+    scores = (query @ k_full.transpose(-1, -2)) / (query.shape[-1] ** 0.5)
+    if additive_mask is not None:
+        scores = scores + additive_mask
+    return (torch.softmax(scores, dim=-1) @ v_full).transpose(1, 2)
+
+
+@pytest.mark.parametrize("groups", [1, 7])
+def test_grouped_decode_matches_reference(groups: int) -> None:
+    torch.manual_seed(2)
+    kv_heads, kv_len, dim = 2, 11, 8
+    query = torch.randn(3, kv_heads * groups, 1, dim)
+    key = torch.randn(3, kv_heads, kv_len, dim)
+    value = torch.randn(3, kv_heads, kv_len, dim)
+
+    out = grouped_decode_attention(query, key, value, None)
+    assert out.shape == (3, 1, kv_heads * groups, dim)
+    assert torch.allclose(out, _reference_decode(query, key, value), atol=1e-5)
+
+    keep = torch.ones(3, 1, 1, kv_len, dtype=torch.bool)
+    keep[0, ..., :4] = False
+    additive = torch.zeros(3, 1, 1, kv_len).masked_fill(~keep, float("-inf"))
+    expected = _reference_decode(query, key, value, additive)
+    assert torch.allclose(grouped_decode_attention(query, key, value, keep), expected, atol=1e-5)
+    assert torch.allclose(grouped_decode_attention(query, key, value, additive), expected, atol=1e-5)
+
+
+def test_grouped_decode_rejects_prefill_shapes() -> None:
+    with pytest.raises(ValueError, match="one query position"):
+        grouped_decode_attention(torch.zeros(1, 4, 2, 8), torch.zeros(1, 2, 2, 8), torch.zeros(1, 2, 2, 8), None)
+
+
+def test_grouped_decode_generation_matches_eager() -> None:
+    """End to end: a padded batch generates the same tokens as the eager reference."""
+    ids = torch.tensor([[0, 0, 0, 5, 9, 13], [7, 11, 15, 19, 23, 27]])
+    mask = torch.tensor([[0, 0, 0, 1, 1, 1], [1, 1, 1, 1, 1, 1]])
+    outputs = {}
+    for impl in ("eager", "sdpa_grouped_decode"):
+        model = _tiny_llama(impl)
+        with torch.no_grad():
+            outputs[impl] = model.generate(
+                input_ids=ids, attention_mask=mask, max_new_tokens=8, do_sample=False, pad_token_id=0
+            )
+    assert torch.equal(outputs["eager"], outputs["sdpa_grouped_decode"])

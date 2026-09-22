@@ -50,6 +50,31 @@ worth several orders of magnitude at long context.
 This is a workaround for a platform limitation, not an improvement on transformers. On a
 build that has flash attention, stock ``sdpa`` is the better choice, which is why
 :func:`recommended_attn_implementation` probes the build rather than assuming.
+
+## A second trap: custom names get no padding mask
+
+Transformers builds the attention mask through a *separate* registry from the attention
+function itself. For any implementation name missing from that registry,
+``masking_utils`` concludes that the backend "doesn't need a mask" and passes ``None``.
+Registering only the attention function therefore silently drops the padding mask: in
+a left-padded batch every real token attends to the pad tokens. Batch-size-1 runs are
+unaffected, which is why the benchmarks never showed it; every batched forward pass
+was. :func:`register_attention_backends` now registers the stock SDPA mask builder
+under each custom name, and ``tests/test_attention.py`` checks a padded batch against
+the same prompt run alone.
+
+## Decode: read the KV cache once
+
+``sdpa_no_gqa`` fixes prefill but is wasteful for decoding. With one query token, the
+memory-efficient kernel parallelises over batch x heads - 28 thread blocks at batch 1 on
+a 128-SM card - and ``repeat_kv`` first copies the whole cache ``groups`` times per
+layer per token. At 16k context that is ~6.6 GB of extra traffic per generated token.
+
+``sdpa_grouped_decode`` keeps the ``sdpa_no_gqa`` prefill and replaces the decode step
+with two grouped matmuls: the query heads that share a KV head are stacked as rows of
+one matrix, so each key and value is read exactly once, with no expansion and with
+cuBLAS tiling over the sequence dimension. The arithmetic follows transformers' eager
+attention (bf16 scores, float32 softmax).
 """
 
 from __future__ import annotations
@@ -163,19 +188,107 @@ def sdpa_no_gqa_attention_forward(
     return attn_output, None
 
 
+#: Name for the variant with a grouped, expansion-free decode step.
+SDPA_GROUPED_DECODE = "sdpa_grouped_decode"
+
+#: Every custom implementation this module registers.
+CUSTOM_IMPLEMENTATIONS = (SDPA_NO_GQA, SDPA_GROUPED_DECODE)
+
+
+def grouped_decode_attention(
+    query: torch.Tensor,
+    key: torch.Tensor,
+    value: torch.Tensor,
+    attention_mask: Optional[torch.Tensor],
+    scaling: Optional[float] = None,
+) -> torch.Tensor:
+    """Single-query attention without expanding the KV heads.
+
+    Args:
+        query: ``(batch, heads, 1, dim)``.
+        key: ``(batch, kv_heads, kv_len, dim)``.
+        value: ``(batch, kv_heads, kv_len, dim)``.
+        attention_mask: ``None``, a boolean ``(batch, 1, 1, kv_len)`` mask where True
+            means attend, or an additive float mask of the same shape.
+        scaling: Softmax temperature; ``1/sqrt(dim)`` when omitted.
+
+    Returns:
+        ``(batch, 1, heads, dim)``, the layout transformers expects back.
+
+    Heads are grouped the way ``repeat_kv`` expands them - query head ``h`` reads KV head
+    ``h // groups`` - so reshaping ``(heads,)`` to ``(kv_heads, groups)`` pairs each
+    query with its own key and value.
+    """
+    batch, heads, q_len, dim = query.shape
+    kv_heads = key.shape[1]
+    if q_len != 1:
+        raise ValueError(f"grouped decode needs one query position, got {q_len}")
+    if heads % kv_heads:
+        raise ValueError(f"{heads} query heads do not divide into {kv_heads} KV heads")
+    groups = heads // kv_heads
+    scale = scaling if scaling is not None else dim**-0.5
+
+    q = query.reshape(batch, kv_heads, groups, dim)
+    scores = torch.matmul(q, key.transpose(-1, -2)) * scale
+    if attention_mask is not None:
+        mask = attention_mask[..., : key.shape[-2]]
+        if mask.dtype == torch.bool:
+            scores = scores.masked_fill(~mask, float("-inf"))
+        else:
+            scores = scores + mask
+    probs = torch.softmax(scores, dim=-1, dtype=torch.float32).to(value.dtype)
+    out = torch.matmul(probs, value)
+    return out.reshape(batch, heads, 1, dim).transpose(1, 2).contiguous()
+
+
+def sdpa_grouped_decode_attention_forward(
+    module: torch.nn.Module,
+    query: torch.Tensor,
+    key: torch.Tensor,
+    value: torch.Tensor,
+    attention_mask: Optional[torch.Tensor],
+    dropout: float = 0.0,
+    scaling: Optional[float] = None,
+    is_causal: Optional[bool] = None,
+    **kwargs: Any,
+) -> tuple[torch.Tensor, None]:
+    """``sdpa_no_gqa`` for prefill, :func:`grouped_decode_attention` for decode steps."""
+    if query.shape[2] == 1 and dropout == 0.0:
+        return grouped_decode_attention(query, key, value, attention_mask, scaling), None
+    return sdpa_no_gqa_attention_forward(
+        module, query, key, value, attention_mask,
+        dropout=dropout, scaling=scaling, is_causal=is_causal, **kwargs,
+    )
+
+
 def register_attention_backends() -> list[str]:
     """Register this project's custom attention implementations with transformers.
+
+    Two registries are updated, and both matter. The attention-function registry makes
+    the name loadable; the mask registry makes transformers build a padding mask for
+    it. Without the second, ``masking_utils`` passes ``None`` for any unknown name and
+    padded batches silently attend to their pad tokens.
 
     Idempotent, so it is safe to call from every entry point.
 
     Returns:
         The names now available to ``attn_implementation``.
     """
+    from transformers.masking_utils import AttentionMaskInterface, sdpa_mask
     from transformers.modeling_utils import ALL_ATTENTION_FUNCTIONS
 
-    if SDPA_NO_GQA not in ALL_ATTENTION_FUNCTIONS.valid_keys():
-        ALL_ATTENTION_FUNCTIONS[SDPA_NO_GQA] = sdpa_no_gqa_attention_forward
-        logger.debug("Registered attention implementation %r", SDPA_NO_GQA)
+    functions = {
+        SDPA_NO_GQA: sdpa_no_gqa_attention_forward,
+        SDPA_GROUPED_DECODE: sdpa_grouped_decode_attention_forward,
+    }
+    for name, fn in functions.items():
+        if name not in ALL_ATTENTION_FUNCTIONS.valid_keys():
+            ALL_ATTENTION_FUNCTIONS[name] = fn
+            logger.debug("Registered attention implementation %r", name)
+        # The mask builder must go into the class-level mapping: masking_utils checks
+        # ``_global_mapping`` directly, so an instance-level assignment is invisible.
+        if name not in AttentionMaskInterface._global_mapping:
+            AttentionMaskInterface.register(name, sdpa_mask)
     return list(ALL_ATTENTION_FUNCTIONS.valid_keys())
 
 
