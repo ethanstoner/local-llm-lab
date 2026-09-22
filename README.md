@@ -209,8 +209,163 @@ minutes into a sweep.
 
 ## 6. Results
 
-*Filled in from measured runs - see `results/` for the raw files and `PROGRESS.md` for
-the session log. This section is written after the runs complete, from their output.*
+All figures below come from `results/`. Every number was measured; none is estimated,
+and configurations that could not run are reported as such rather than omitted.
+
+### 6.1 Where the time goes (Phase 1)
+
+`Qwen/Qwen2.5-7B-Instruct`, bf16, batch size 1, 128 generated tokens, median of three
+repeats after one discarded warm-up.
+
+| prompt tokens | decode tok/s | end-to-end tok/s | TTFT | prefill tok/s | peak VRAM |
+|---|---|---|---|---|---|
+| 128 | 44.8 | 44.8 | 27 ms | 4999 | 16227 MiB |
+| 512 | 43.6 | 43.1 | 57 ms | 8728 | 16311 MiB |
+| 2048 | 39.6 | 37.5 | 209 ms | 9903 | 16691 MiB |
+| 8192 | 27.4 | 22.8 | 974 ms | 8447 | 17915 MiB |
+| 16384 | 19.6 | 14.7 | 2211 ms | 7427 | 20283 MiB |
+
+Three things worth drawing out.
+
+**Decode throughput falls 56% from 128 to 16384 tokens** (and end-to-end falls 67%) while the weights never change.
+Nothing about the matrix multiplications got harder; the KV cache got bigger, and every
+decode step must now read it. This is the clearest demonstration in the project that
+single-stream decoding is bound by memory traffic rather than arithmetic.
+
+**Prefill and decode move in opposite directions over most of the range.** Prefill
+throughput *rises* from 4999 to 9903 tok/s between 128 and 2048 tokens, because short
+prompts cannot fill the GPU, and then falls back to 7427 at 16384 as attention's
+quadratic term begins to tell. Decode falls monotonically throughout. A single
+"tokens per second" number would have averaged a rising curve with a falling one.
+
+**Time to first token and the independent prefill pass agree.** At 2048 tokens: TTFT
+209 ms against 2048/9903 = 207 ms. At 16384: 2211 ms against 16384/7427 = 2206 ms. Two
+separate measurements of nearly the same quantity, taken by different mechanisms and
+landing within 1%, which is the evidence that the timing harness does what it claims.
+
+The per-token synchronization control measured **0.62% overhead** (2.854 s with,
+2.837 s without). The inter-token latency distribution is therefore close to free.
+
+### 6.2 What quantization costs (Phase 2)
+
+Same model, 512-token prompt, 128 generated tokens.
+
+| precision | decode tok/s | vs bf16 | weights | vs bf16 | peak VRAM |
+|---|---|---|---|---|---|
+| fp16 | 44.2 | +0.4% | 14526 MiB | - | 16349 MiB |
+| bf16 | 44.0 | reference | 14526 MiB | reference | 16311 MiB |
+| nf4 | 40.0 | **-9%** | 5191 MiB | **-64%** | 8509 MiB |
+| int8 | 13.1 | **-70%** | 8303 MiB | -43% | 10531 MiB |
+| fp32 | 2.2 | -95% | 29051 MiB | +100% | 24383 MiB |
+
+**nf4 is the clear winner and int8 is a trap.** nf4 gives back 64% of the memory for a
+9% throughput cost, and at a 2048-token prompt it matches bf16 outright (40.3 vs
+40.2 tok/s) - by then the smaller weight reads are paying for the dequantization.
+int8 saves *less* memory than nf4 and runs 3.4x slower: LLM.int8()'s mixed-precision
+decomposition splits each matmul into two passes and cannot be folded into one kernel.
+Someone reaching for "8-bit" as the moderate, safe option would get the worst row here.
+
+**fp32 is the interesting failure.** 7.62B parameters at four bytes is 29051 MiB on a
+24564 MiB card, so it should not fit - and it did not raise OOM. The Windows display
+driver pages VRAM to host memory instead, so the model loaded and ran, at 2.2 tok/s with
+a 4.7 s time to first token. At a 2048-token prompt it fell to 0.67 tok/s with a 36 s
+TTFT, and the third repeat degraded further to 98 s as paging pressure compounded.
+
+That is the single most useful operational finding here: **on this platform, exceeding
+VRAM does not fail, it degrades by a factor of sixty.** A harness that trusted the
+absence of an exception would have published those numbers as the model's performance.
+
+### 6.3 Long-context attention on a build without flash
+
+Diagnosing why the first Phase 1 sweep appeared to hang produced a result worth its own
+section. Prefill only, bf16:
+
+| prompt tokens | stock `sdpa` | `sdpa_no_gqa` |
+|---|---|---|
+| 2048 | 0.565 s / 1322 MiB | 0.609 s / 400 MiB |
+| 8192 | 140.667 s / 17549 MiB | 0.968 s / 1572 MiB |
+| 16384 | did not fit | 2.206 s / 3136 MiB |
+
+Transformers passes `enable_gqa=True` to PyTorch's attention whenever there is no
+attention mask, to keep it off the quadratic math kernel. PyTorch's Windows wheels are
+not built with flash attention, and the memory-efficient kernel does not implement
+`enable_gqa` - so both fast kernels are unavailable and the flag produces exactly the
+fallback it was meant to prevent. Expanding the KV heads manually and omitting the flag
+restores linear memory. Full diagnosis in `src/models/attention.py` and `PROGRESS.md`.
+
+### 6.4 What quantization costs in fidelity
+
+Against the bf16 reference: 1088 teacher-forced positions, 32 fixed prompts, 64-token
+greedy continuations.
+
+| precision | teacher-forced top-1 | perplexity ratio | mean KL (nats) | next-token top-1 | exact continuation |
+|---|---|---|---|---|---|
+| fp16 | 0.981 | 0.997 | 0.0006 | 1.000 | 0.50 |
+| int8 | 0.958 | 1.003 | 0.0077 | 0.969 | 0.09 |
+| nf4 | 0.889 | 1.047 | 0.0584 | 0.938 | 0.00 |
+
+Reference perplexity 12.54.
+
+**This is the column that changes the Phase 2 verdict.** On throughput and memory alone
+nf4 looked like a straightforward win. It is also the least faithful of the three: 4.7%
+higher perplexity, 89% teacher-forced top-1 agreement, and not one of 32 greedy
+continuations matching the reference exactly. That is a real behavioural difference, not
+a rounding artifact. nf4 remains the right default on a memory-constrained card, but
+"9% slower for 64% less memory" is only half the sentence.
+
+**The most useful methodological finding here is about the metric, not the models.**
+fp16 and bf16 are numerically near-identical - mean KL of 0.0006 nats and *100%* next-token
+top-1 agreement - yet only **half** their greedy continuations match exactly, with the
+median divergence at token 49 of 64. Greedy decoding is chaotic: once two models pick
+different tokens anywhere, the sequences separate permanently, so exact-match rate mostly
+measures how long it takes numerical noise to flip one argmax. It is reported here
+because it is what a user would notice, but distribution divergence is the metric that
+actually tracks quality. A quantization comparison resting on continuation match alone
+would conclude that fp16 "fails" half the time.
+
+### 6.5 Is refusal linearly represented? (Phase 5)
+
+`JailbreakBench/JBB-Behaviors`, 100 harmful and 100 matched benign instructions, split
+70/30. The direction is fitted on the training split; everything below is the held-out
+split.
+
+**The behavioural precondition holds.** The model refused **36/40 (90%)** of harmful
+prompts and **5/40 (12.5%)** of benign ones. Without that gap, a separating direction
+would be measuring topic rather than refusal.
+
+| layer | held-out Cohen's *d* | held-out AUROC | fitting-split *d* |
+|---|---|---|---|
+| 0 | 0.13 | 0.541 | 0.84 |
+| 5 | 0.06 | 0.524 | 0.76 |
+| 10 | 0.35 | 0.596 | 1.17 |
+| 15 | 1.78 | 0.894 | 2.07 |
+| 18 | 3.00 | 0.976 | 3.01 |
+| **20** | **3.59** | **0.982** | 3.12 |
+| 24 | 3.41 | 0.979 | 3.06 |
+| 27 | 3.41 | 0.978 | 3.01 |
+
+**A direction is clearly present, and it emerges at a specific depth.** Separation is at
+chance through layers 0-10, rises sharply between layers 12 and 19, and plateaus from
+layer 18 onward, peaking at layer 20 of 28 - about 71% of the way through the network.
+That is consistent with Arditi et al., who report the refusal direction in the middle-to-late
+layers rather than at the output.
+
+**The train/test split earned its place.** At layer 0 the fitting split shows *d* = 0.84
+while the held-out split shows *d* = 0.13. In a 3584-dimensional space, 70 examples per
+class are enough to find a direction that separates the training data by half a standard
+deviation of pure noise. Fitting and evaluating on the same prompts would have reported a
+refusal signal in the embedding layer.
+
+**"A single direction" needs qualifying.** Cosine similarity between each layer's fitted
+direction and layer 20's falls off either side of the peak: 0.60 at layer 18, 0.78 at 19,
+0.85 at 21, 0.75 at 22, and 0.39 by layer 27. Near-zero below layer 10. So the directions
+found in the high-signal band are *related* but not identical, and this observational
+setup cannot distinguish "one feature read imperfectly at several depths" from "several
+correlated features". Settling that needs intervention, which is out of scope here.
+
+Residual-stream norm grows from ~10 at layer 0 to ~400 at layer 27 and is
+indistinguishable between the two prompt classes, which is why layers are compared with
+standardised statistics rather than raw projection magnitudes.
 
 ---
 
@@ -229,10 +384,25 @@ the session log. This section is written after the runs complete, from their out
 * **The refusal classifier is substring matching.** It is the same crude approach the
   original paper uses for its refusal score. It will miss an unusually phrased refusal,
   so reported refusal rates are a lower bound.
+* **The OOM path is untested on this hardware.** `src/models/oom.py` is covered by unit
+  tests, but no experiment here ever triggered it: fp32 needed 29051 MiB on a 24564 MiB
+  card and the Windows driver paged rather than failing. On a platform that raises
+  `CUDA out of memory` properly, that code path is unexercised by these runs.
+* **The perplexity corpus is 1089 tokens.** That is ~1088 scored positions - enough for a
+  paired comparison between precisions, not enough to characterise the model's absolute
+  perplexity on natural text.
+* **Exact continuation match is a weak quality signal.** Section 6.4 shows fp16 and bf16
+  disagreeing on half of greedy continuations despite being numerically near-identical.
+  The metric is reported because it reflects what a user sees, but conclusions should
+  rest on the distribution-level numbers.
+* **Phase 5 used 100 prompts per class, 30 held out.** Enough to establish that a
+  direction exists at an effect size of *d* > 3, not enough to characterise its
+  variation across prompt types or categories.
 * **Phase 5 is correlational.** A direction that separates two prompt classes is not
   evidence that the model *uses* that direction. Establishing that requires intervention
   - ablating the direction or steering along it - which this project deliberately does
-  not do.
+  not do. Section 6.5 also shows the per-layer directions are related but not identical,
+  which observation alone cannot resolve.
 * **Quantized parameter counts are stored elements, not logical parameters.** 4-bit
   weights are packed into `uint8`, so `param_count` undercounts; the `dtype_histogram`
   in each run's metadata shows the real storage picture.

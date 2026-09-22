@@ -40,7 +40,10 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--results-root", default="results", help="Where runs are stored")
     parser.add_argument("--figures-dir", default="figures", help="Where figures are written")
-    parser.add_argument("--benchmark-run", default=None, help="Use a specific benchmark run dir")
+    parser.add_argument("--benchmark-run", default=None, help="Use a specific context-sweep run dir")
+    parser.add_argument(
+        "--precision-run", default=None, help="Use a specific precision-sweep run dir"
+    )
     parser.add_argument("--quality-run", default=None, help="Use a specific quality run dir")
     parser.add_argument("--refusal-run", default=None, help="Use a specific refusal run dir")
     parser.add_argument("--verbose", action="store_true", help="Log at DEBUG level")
@@ -72,19 +75,54 @@ def read_rows(path: Path) -> list[dict[str, Any]]:
         return [{k: _coerce(v) for k, v in row.items()} for row in csv.DictReader(handle)]
 
 
+def _n_distinct(rows: Sequence[Mapping[str, Any]], column: str) -> int:
+    """How many distinct values of ``column`` a results table measured successfully."""
+    return len({r.get(column) for r in rows if r.get("status") == "ok"})
+
+
 def discover_runs(results_root: str | Path) -> dict[str, Path]:
     """Return the most recent run directory of each kind.
 
     Runs are classified by which result file they contain rather than by experiment
     name, so a renamed experiment still renders.
+
+    Two subtleties, both of which produced wrong figures before they were handled:
+
+    * **Most recent means by timestamp, not by iteration order.** Run directories are
+      named with a UTC timestamp, so comparing those names orders runs globally.
+      Selecting whichever run happened to be visited last instead picks the
+      alphabetically-last *experiment* - which is how a smoke run on a 1.5B model came
+      to supply the headline throughput figures for a 7B experiment.
+    * **A context sweep and a precision sweep want different figures.** They are tracked
+      separately, so a precision sweep does not displace the context sweep's curves, and
+      each is chosen by how richly it sweeps its own axis before recency is considered -
+      a two-point context sweep run later should not replace a five-point one.
     """
-    found: dict[str, Path] = {}
+    ranked: dict[str, list[tuple[int, str, Path]]] = {kind: [] for kind in RUN_KINDS}
+    ranked["benchmark_precision"] = []
+
     for run_dir in iter_run_dirs(results_root):
         for kind, marker in RUN_KINDS.items():
-            if (run_dir / marker).is_file():
-                # iter_run_dirs yields oldest first, so the last write wins.
-                found[kind] = run_dir
-    return found
+            if not (run_dir / marker).is_file():
+                continue
+            if kind == "benchmark":
+                rows = read_rows(run_dir / "results.csv")
+                n_precisions = _n_distinct(rows, "precision")
+                n_contexts = _n_distinct(rows, "context_length")
+                if n_precisions > 1:
+                    ranked["benchmark_precision"].append((n_precisions, run_dir.name, run_dir))
+                if n_contexts > 1:
+                    ranked["benchmark"].append((n_contexts, run_dir.name, run_dir))
+            else:
+                ranked[kind].append((0, run_dir.name, run_dir))
+
+    # Richest sweep first; directory names are sortable UTC timestamps, so they break ties
+    # in favour of the most recent run.
+    return {
+        kind: max(entries)[2]
+        for kind, entries in ranked.items()
+        if entries
+    }
 
 
 def _provenance(meta: Mapping[str, Any], run_dir: Path) -> str:
@@ -153,18 +191,33 @@ def render_benchmark(run_dir: Path, figures_dir: Path) -> list[Path]:
         )
     )
 
-    if len(precisions) > 1:
-        # Hold context fixed so the comparison is between precisions and nothing else.
-        target = sorted(contexts)[0] if contexts else None
-        fixed = [r for r in rows if r.get("context_length") == target]
-        note = f"{caption} · context fixed at {target} tokens"
-        keep(plots.throughput_by_precision(fixed, figures_dir / "throughput_by_precision.png", note))
-        keep(plots.vram_by_precision(fixed, figures_dir / "vram_by_precision.png", note))
-        keep(
-            plots.memory_throughput_tradeoff(
-                fixed, figures_dir / "memory_throughput_tradeoff.png", note
-            )
-        )
+    return written
+
+
+def render_benchmark_precision(run_dir: Path, figures_dir: Path) -> list[Path]:
+    """Render the precision-comparison figures from a run that swept precisions."""
+    metrics = read_json(run_dir / "metrics.json")
+    caption = _provenance(metrics.get("meta", {}), run_dir)
+    rows = read_rows(run_dir / "results.csv")
+    if not rows:
+        return []
+
+    contexts = {r["context_length"] for r in rows if r.get("status") == "ok"}
+    # Hold context fixed so the comparison is between precisions and nothing else.
+    target = sorted(contexts)[0] if contexts else None
+    fixed = [r for r in rows if r.get("context_length") == target]
+    note = f"{caption} · context fixed at {target} tokens"
+
+    written: list[Path] = []
+    for path in (
+        plots.throughput_by_precision(fixed, figures_dir / "throughput_by_precision.png", note),
+        plots.vram_by_precision(fixed, figures_dir / "vram_by_precision.png", note),
+        plots.memory_throughput_tradeoff(
+            fixed, figures_dir / "memory_throughput_tradeoff.png", note
+        ),
+    ):
+        if path is not None:
+            written.append(path)
     return written
 
 
@@ -269,6 +322,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     overrides = {
         "benchmark": args.benchmark_run,
+        "benchmark_precision": args.precision_run,
         "quality": args.quality_run,
         "refusal": args.refusal_run,
     }
@@ -282,6 +336,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     renderers = {
         "benchmark": render_benchmark,
+        "benchmark_precision": render_benchmark_precision,
         "quality": render_quality,
         "refusal": render_refusal,
     }

@@ -1,0 +1,4 @@
+precision,status,cont_n,cont_exact_match_rate,cont_mean_token_agreement,cont_mean_first_divergence_index,cont_max_tokens_compared,dist_n,dist_vocab_size,dist_mean_kl_nats,dist_median_kl_nats,dist_max_kl_nats,dist_mean_js_nats,dist_top1_agreement,tf_n_positions,tf_top1_agreement,tf_reference_perplexity,tf_candidate_perplexity,tf_perplexity_ratio,tf_mean_target_logprob_delta,tf_mean_abs_target_logprob_delta,load_weights_mib,load_idle_device_used_mib
+fp16,ok,32,0.5,0.812012,49.4688,64,32,152064,0.00059994,0.00018366,0.00705065,0.00015077,1.0,1088,0.980699,12.536819,12.495255,0.996685,0.00332065,0.02768567,14525.6,16269.5
+int8,ok,32,0.09375,0.532227,28.25,64,32,152064,0.00765173,0.0022916,0.04799728,0.00190481,0.96875,1088,0.957721,12.536819,12.570526,1.002689,-0.00268522,0.07995676,8302.6,10447.5
+nf4,ok,32,0.0,0.351074,18.0625,64,32,152064,0.05835337,0.01888908,0.36677229,0.01472501,0.9375,1088,0.888787,12.536819,13.1215,1.046637,-0.04558239,0.22558708,5191.1,8435.5

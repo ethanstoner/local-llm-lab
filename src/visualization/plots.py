@@ -431,11 +431,24 @@ def memory_throughput_tradeoff(
     ys = [r["decode_tokens_per_s_median"] for r in usable]
     ax.scatter(xs, ys, s=70, color=NEUTRAL_MARK, zorder=3, edgecolors=SURFACE, linewidths=2)
 
+    # bf16 and fp16 land almost exactly on top of each other - same weights, same speed -
+    # so labels are nudged apart when points are close in axis-fraction terms.
+    x_span = (max(xs) - min(xs)) or 1.0
+    y_span = (max(ys) - min(ys)) or 1.0
+    placed: list[tuple[float, float]] = []
+
     for row, x, y in zip(usable, xs, ys):
+        offset_y = 4.0
+        for px, py in placed:
+            close_x = abs(x - px) / x_span < 0.06
+            close_y = abs(y - py) / y_span < 0.06
+            if close_x and close_y:
+                offset_y -= 13.0
+        placed.append((x, y))
         ax.annotate(
             str(row["precision"]),
             xy=(x, y),
-            xytext=(8, 4),
+            xytext=(8, offset_y),
             textcoords="offset points",
             fontsize=9.5,
             color=TEXT_PRIMARY,
