@@ -19,8 +19,9 @@ Design rules applied throughout, in order of how often they are got wrong:
 
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
 from pathlib import Path
-from typing import Any, Mapping, Sequence
+from typing import Any
 
 import matplotlib
 
@@ -723,4 +724,358 @@ def activation_norms(
     ax.set_title("Residual-stream norm by depth")
     ax.legend(loc="upper left")
     _despine(ax)
+    return _finish(fig, path, subtitle)
+
+
+# --------------------------------------------------------------------------------------
+# Phase 6: causal test of the refusal direction
+# --------------------------------------------------------------------------------------
+
+#: One hue for "the refusal direction", one for controls; baseline in ink.
+INTERVENTION_COLOR = CATEGORICAL[7]
+CONTROL_COLOR = "#a3a19b"
+BASELINE_COLOR = NEUTRAL_MARK
+
+
+def _rate_bars(
+    ax: plt.Axes,
+    entries: Sequence[tuple[str, Mapping[str, Any], str]],
+    title: str,
+) -> None:
+    """Horizontal refusal-rate bars with Wilson intervals and direct labels."""
+    labels = [e[0] for e in entries]
+    rates = [e[1]["refusal_rate"] * 100 for e in entries]
+    low = [(e[1]["refusal_rate"] - e[1]["refusal_ci_low"]) * 100 for e in entries]
+    high = [(e[1]["refusal_ci_high"] - e[1]["refusal_rate"]) * 100 for e in entries]
+    colors = [e[2] for e in entries]
+    y = list(range(len(entries)))[::-1]
+    ax.barh(y, rates, color=colors, height=0.62, xerr=[low, high],
+            error_kw={"ecolor": TEXT_SECONDARY, "elinewidth": 1.0, "capsize": 2.5})
+    for yi, rate, entry in zip(y, rates, entries):
+        ax.annotate(
+            f"{rate:.0f}%  ({entry[1]['refusals']}/{entry[1]['n']})",
+            xy=(min(rate + (entry[1]["refusal_ci_high"] * 100 - rate) + 1.5, 100), yi),
+            va="center", ha="left", fontsize=8.5, color=TEXT_PRIMARY,
+        )
+    ax.set_yticks(y)
+    ax.set_yticklabels(labels)
+    ax.set_xlim(0, 118)
+    ax.set_xticks([0, 25, 50, 75, 100])
+    ax.set_xlabel("refusal rate (%), 95% Wilson interval")
+    ax.set_title(title)
+    ax.grid(axis="y", visible=False)
+    _despine(ax)
+
+
+def intervention_overview(payload: Mapping[str, Any], path: Path, subtitle: str = "") -> Path | None:
+    """Necessity and sufficiency side by side, each against its controls."""
+    pooled = payload.get("pooled") or {}
+    harmful, harmless = pooled.get("harmful"), pooled.get("harmless")
+    selection = payload.get("selection") or {}
+    if not harmful or not harmless:
+        return None
+    target = selection.get("observational_layer")
+    causal = selection.get("causal_layer")
+    layers = [layer for layer in dict.fromkeys([causal, target]) if layer is not None]
+
+    necessity = [("no intervention", harmful["baseline"], BASELINE_COLOR)]
+    for layer in layers:
+        tag = "causal pick" if layer == causal else "observational pick"
+        necessity.append((f"ablate layer {layer} direction\n({tag})", harmful[f"ablate:L{layer}"], INTERVENTION_COLOR))
+    randoms = sorted(k for k in harmful if k.startswith("ablate:random"))
+    for key in randoms:
+        necessity.append((f"ablate random direction {key[-1]}", harmful[key], CONTROL_COLOR))
+    low_signal = [k for k in harmful if k.startswith("ablate:L") and int(k[8:]) <= 4]
+    for key in sorted(low_signal, key=lambda k: int(k[8:]))[:1]:
+        necessity.append((f"ablate layer {key[8:]} direction\n(no Phase 5 signal)", harmful[key], CONTROL_COLOR))
+
+    sufficiency = [("no intervention", harmless["baseline"], BASELINE_COLOR)]
+    for layer in layers:
+        key = f"add:L{layer}x1"
+        if key in harmless:
+            sufficiency.append((f"add layer {layer} direction", harmless[key], INTERVENTION_COLOR))
+        for rkey in sorted(k for k in harmless if k.startswith(f"add:L{layer}random")):
+            sufficiency.append((f"add random vector, layer {layer}\n(same norm)", harmless[rkey], CONTROL_COLOR))
+            break
+
+    height = 0.55 * max(len(necessity), len(sufficiency)) + 1.6
+    fig, axes = plt.subplots(1, 2, figsize=(12.0, height))
+    _rate_bars(axes[0], necessity, "Necessity: refusal on harmful prompts")
+    _rate_bars(axes[1], sufficiency, "Sufficiency: refusal on harmless prompts")
+    fig.suptitle("Removing the direction stops refusal; adding it induces refusal",
+                 x=0.0, ha="left", fontsize=12.5, fontweight="semibold", color=TEXT_PRIMARY)
+    fig.tight_layout()
+    return _finish(fig, path, subtitle)
+
+
+def intervention_layer_sweep(rows: Sequence[Mapping[str, Any]], selection: Mapping[str, Any],
+                             baseline_rate: float | None, budget: float | None,
+                             path: Path, subtitle: str = "") -> Path | None:
+    """Observation vs intervention vs cost, one panel each, sharing the layer axis."""
+    usable = sorted((r for r in rows if r.get("harmful_refusal_rate") is not None), key=lambda r: r["source_layer"])
+    if not usable:
+        return None
+    x = [r["source_layer"] for r in usable]
+    fig, axes = plt.subplots(3, 1, figsize=(7.4, 8.4), sharex=True)
+
+    axes[0].plot(x, [r["phase5_test_cohens_d"] for r in usable], marker="o", color=CATEGORICAL[0])
+    axes[0].set_ylabel("held-out Cohen's d")
+    axes[0].set_title("Observation (Phase 5): how well each layer's direction separates prompts")
+
+    rate = [r["harmful_refusal_rate"] * 100 for r in usable]
+    lo = [r["harmful_refusal_ci_low"] * 100 for r in usable]
+    hi = [r["harmful_refusal_ci_high"] * 100 for r in usable]
+    axes[1].fill_between(x, lo, hi, color=INTERVENTION_COLOR, alpha=0.15, linewidth=0)
+    axes[1].plot(x, rate, marker="o", color=INTERVENTION_COLOR)
+    if baseline_rate is not None:
+        axes[1].axhline(baseline_rate * 100, color=TEXT_SECONDARY, linestyle=":", linewidth=1.0)
+        axes[1].annotate("no intervention", xy=(x[0], baseline_rate * 100), xytext=(2, -11),
+                         textcoords="offset points", fontsize=8, color=TEXT_SECONDARY)
+    axes[1].set_ylim(0, 105)
+    axes[1].set_ylabel("harmful refusal (%)")
+    axes[1].set_title("Intervention: refusal left after ablating that layer's direction")
+
+    ratio = [r.get("perplexity_ratio") for r in usable]
+    if all(v is not None for v in ratio):
+        axes[2].plot(x, [(v - 1) * 100 for v in ratio], marker="o", color=CATEGORICAL[3])
+        if budget is not None:
+            axes[2].axhline((budget - 1) * 100, color=TEXT_SECONDARY, linestyle=":", linewidth=1.0)
+            axes[2].annotate(f"selection budget (+{(budget - 1) * 100:.0f}%)", xy=(x[0], (budget - 1) * 100),
+                             xytext=(2, 4), textcoords="offset points", fontsize=8, color=TEXT_SECONDARY)
+        axes[2].set_yscale("symlog", linthresh=1.0)
+    axes[2].set_ylabel("perplexity change (%)")
+    axes[2].set_xlabel("layer the direction was fitted at")
+    axes[2].set_title("Cost: corpus perplexity with that direction ablated")
+
+    causal, observed = selection.get("causal_layer"), selection.get("observational_layer")
+    for ax in axes:
+        for layer, style in ((observed, (0, (1, 2))), (causal, "-")):
+            if layer is not None:
+                ax.axvline(layer, color=GRID, linewidth=6, zorder=0, linestyle=style)
+        _despine(ax)
+    if causal is not None:
+        axes[1].annotate(f"causal pick: {causal}", xy=(causal, 100), xytext=(4, -10),
+                         textcoords="offset points", fontsize=8.5, color=TEXT_PRIMARY)
+    if observed is not None and observed != causal:
+        axes[0].annotate(f"observational pick: {observed}", xy=(observed, max(r["phase5_test_cohens_d"] for r in usable)),
+                         xytext=(-4, -2), textcoords="offset points", ha="right", fontsize=8.5, color=TEXT_PRIMARY)
+    fig.tight_layout()
+    return _finish(fig, path, subtitle)
+
+
+def intervention_dose_response(conditions: Sequence[Mapping[str, Any]], path: Path,
+                               subtitle: str = "") -> Path | None:
+    """Harmless-prompt refusal against the size of the added vector, per layer."""
+    adds = [c for c in conditions if c.get("kind") == "add" and c.get("target_class") == "harmless"]
+    if not adds:
+        return None
+    pooled: dict[tuple[int, str, float], list[Mapping[str, Any]]] = {}
+    for c in adds:
+        pooled.setdefault((c["source_layer"], c["direction"], c["coefficient"]), []).append(c)
+
+    def rate(group: Sequence[Mapping[str, Any]]) -> tuple[float, int, int]:
+        k = sum(g["refusals"] for g in group)
+        n = sum(g["n"] for g in group)
+        return 100.0 * k / n, k, n
+
+    fig, axes = plt.subplots(1, 2, figsize=(11.0, 4.2))
+    layers = sorted({k[0] for k in pooled})
+    palette = {layer: CATEGORICAL[(7, 0, 2)[i % 3]] for i, layer in enumerate(layers)}
+    for layer in layers:
+        keys = sorted(k for k in pooled if k[0] == layer and k[1] == "refusal")
+        xs = [k[2] for k in keys]
+        axes[0].plot(xs, [rate(pooled[k])[0] for k in keys], marker="o", color=palette[layer], label=f"layer {layer} direction")
+        nll = [statistics_mean([g.get("mean_nll_judge") for g in pooled[k]]) for k in keys]
+        if all(v is not None for v in nll):
+            axes[1].plot(xs, nll, marker="o", color=palette[layer], label=f"layer {layer} direction")
+        controls = [k for k in pooled if k[0] == layer and k[1] == "random"]
+        if controls:
+            values = [rate(pooled[k])[0] for k in controls]
+            axes[0].scatter([1.0] * len(values), values, marker="x", color=palette[layer], s=40, zorder=3,
+                            label=f"random vector, layer {layer}")
+    axes[0].set_xlabel("added vector, as a multiple of the class-mean difference")
+    axes[0].set_ylabel("refusal on harmless prompts (%)")
+    axes[0].set_ylim(0, 105)
+    axes[0].set_title("Adding the direction induces refusal")
+    axes[0].legend(loc="upper left")
+    axes[1].set_xlabel("added vector, as a multiple of the class-mean difference")
+    axes[1].set_ylabel("judge NLL per token (nats)")
+    axes[1].set_title("Fluency of what the model says instead")
+    for ax in axes:
+        _despine(ax)
+    fig.tight_layout()
+    return _finish(fig, path, subtitle)
+
+
+def statistics_mean(values: Sequence[float | None]) -> float | None:
+    usable = [v for v in values if v is not None]
+    return sum(usable) / len(usable) if usable else None
+
+
+# --------------------------------------------------------------------------------------
+# Phases 7 and 8: decode attention, batching and the roofline
+# --------------------------------------------------------------------------------------
+
+BACKEND_COLORS = {
+    "sdpa_no_gqa": CATEGORICAL[1],
+    "sdpa_grouped_decode": CATEGORICAL[2],
+}
+BACKEND_LABELS = {
+    "sdpa_no_gqa": "sdpa_no_gqa (repeat_kv + SDPA)",
+    "sdpa_grouped_decode": "sdpa_grouped_decode (this repo)",
+}
+
+
+def decode_backend_ab(summary: Sequence[Mapping[str, Any]], roofline: Sequence[Mapping[str, Any]],
+                      backends: Sequence[str], path: Path, subtitle: str = "") -> Path | None:
+    """Decode speed of each backend against its roofline, and the paired speed-up."""
+    rows = sorted((s for s in summary if s.get("batch_size") == 1), key=lambda s: s["context_length"])
+    if not rows or len(backends) < 2:
+        return None
+    x = [s["context_length"] for s in rows]
+    fig, axes = plt.subplots(2, 1, figsize=(7.4, 7.2), sharex=True, gridspec_kw={"height_ratios": [3, 2]})
+
+    by_backend = {b: {r["context_length"]: r for r in roofline if r["attn_implementation"] == b and r["batch_size"] == 1}
+                  for b in backends}
+    ideal = [by_backend[backends[0]].get(c, {}).get("ceiling_ideal_tok_s") for c in x]
+    if all(v is not None for v in ideal):
+        axes[0].plot(x, ideal, color=TEXT_SECONDARY, linestyle=":", linewidth=1.2, label="roofline: weights + KV read once")
+    for backend in backends:
+        color = BACKEND_COLORS.get(backend, NEUTRAL_MARK)
+        med = [s.get(f"{backend}_decode_tok_s_median") for s in rows]
+        lo = [m - s.get(f"{backend}_decode_tok_s_min", m) for m, s in zip(med, rows)]
+        hi = [s.get(f"{backend}_decode_tok_s_max", m) - m for m, s in zip(med, rows)]
+        axes[0].errorbar(x, med, yerr=[lo, hi], marker="o", color=color, capsize=2.5,
+                         label=BACKEND_LABELS.get(backend, backend))
+        model_ceiling = [by_backend[backend].get(c, {}).get(
+            f"ceiling_{by_backend[backend].get(c, {}).get('traffic_model', 'ideal')}_tok_s") for c in x]
+        if all(v is not None for v in model_ceiling):
+            axes[0].plot(x, model_ceiling, color=color, linestyle="--", linewidth=1.0, alpha=0.7)
+    axes[0].set_ylabel("decode tokens / second")
+    axes[0].set_ylim(bottom=0)
+    axes[0].set_title("Single-stream decode against the bandwidth roofline")
+    axes[0].legend(loc="lower left", fontsize=8.5)
+    axes[0].annotate("dashed: each backend's modelled traffic", xy=(0.99, 0.97), xycoords="axes fraction",
+                     ha="right", va="top", fontsize=8, color=TEXT_SECONDARY)
+
+    other, base = backends[1], backends[0]
+    key = f"{other}_vs_{base}_ratio"
+    med = [s.get(f"{key}_median") for s in rows]
+    if all(v is not None for v in med):
+        lo = [s[f"{key}_min"] for s in rows]
+        hi = [s[f"{key}_max"] for s in rows]
+        axes[1].fill_between(x, lo, hi, color=BACKEND_COLORS.get(other, NEUTRAL_MARK), alpha=0.18, linewidth=0)
+        axes[1].plot(x, med, marker="o", color=BACKEND_COLORS.get(other, NEUTRAL_MARK))
+        axes[1].axhline(1.0, color=TEXT_SECONDARY, linestyle=":", linewidth=1.0)
+        for xi, m in zip(x, med):
+            axes[1].annotate(f"{m:.2f}x", xy=(xi, m), xytext=(0, 6), textcoords="offset points",
+                             ha="center", fontsize=8, color=TEXT_PRIMARY)
+    axes[1].set_ylabel("paired speed-up")
+    axes[1].set_title("Per-round paired ratio (median, band = min to max)")
+    axes[1].set_xscale("log", base=2)
+    axes[1].xaxis.set_major_formatter(_context_formatter())
+    axes[1].set_xticks(x)
+    axes[1].set_xlabel("prompt length (tokens)")
+    for ax in axes:
+        _despine(ax)
+    fig.tight_layout()
+    return _finish(fig, path, subtitle)
+
+
+def batch_throughput(summary: Sequence[Mapping[str, Any]], roofline: Sequence[Mapping[str, Any]],
+                     backends: Sequence[str], path: Path, subtitle: str = "") -> Path | None:
+    """Aggregate throughput and per-sequence speed against batch size."""
+    rows = sorted(summary, key=lambda s: s["batch_size"])
+    if len({s["batch_size"] for s in rows}) < 2:
+        return None
+    x = [s["batch_size"] for s in rows]
+    fig, axes = plt.subplots(1, 2, figsize=(11.6, 4.4))
+    for backend in backends:
+        color = BACKEND_COLORS.get(backend, NEUTRAL_MARK)
+        thr = [s.get(f"{backend}_throughput_tok_s_median") for s in rows]
+        per = [s.get(f"{backend}_decode_tok_s_median") for s in rows]
+        pts = [(xi, t) for xi, t in zip(x, thr) if t is not None]
+        if pts:
+            axes[0].plot(*zip(*pts), marker="o", color=color, label=BACKEND_LABELS.get(backend, backend))
+            last = pts[-1]
+            axes[0].annotate(f"{last[1]:,.0f}", xy=last, xytext=(4, 0), textcoords="offset points",
+                             va="center", fontsize=8.5, color=TEXT_PRIMARY)
+        pts = [(xi, p) for xi, p in zip(x, per) if p is not None]
+        if pts:
+            axes[1].plot(*zip(*pts), marker="o", color=color, label=BACKEND_LABELS.get(backend, backend))
+    ref = {r["batch_size"]: r for r in roofline if r["attn_implementation"] == backends[-1]}
+    ideal = [(b, ref[b]["ceiling_ideal_tok_s"] * b) for b in x if b in ref]
+    if ideal:
+        axes[0].plot(*zip(*ideal), color=TEXT_SECONDARY, linestyle=":", linewidth=1.2,
+                     label="bandwidth roofline (weights + KV)")
+        compute = next(iter(ref.values()))["compute_ceiling_throughput_tok_s"]
+        axes[0].axhline(compute, color=TEXT_SECONDARY, linestyle="--", linewidth=1.0)
+        axes[0].annotate(f"compute roofline {compute:,.0f} tok/s", xy=(x[0], compute), xytext=(2, -11),
+                         textcoords="offset points", fontsize=8, color=TEXT_SECONDARY)
+    for ax in axes:
+        ax.set_xscale("log", base=2)
+        ax.set_xticks(x)
+        ax.xaxis.set_major_formatter(FuncFormatter(lambda v, _: f"{int(v)}"))
+        ax.set_xlabel("batch size (sequences)")
+        _despine(ax)
+    axes[0].set_yscale("log")
+    axes[0].set_ylabel("aggregate tokens / second")
+    axes[0].set_title("Batching: throughput")
+    axes[0].legend(loc="upper left", fontsize=8.5)
+    axes[1].set_ylabel("tokens / second per sequence")
+    axes[1].set_ylim(bottom=0)
+    axes[1].set_title("Batching: what each user sees")
+    fig.tight_layout()
+    return _finish(fig, path, subtitle)
+
+
+def prefill_roofline(roofline: Sequence[Mapping[str, Any]], path: Path, subtitle: str = "") -> Path | None:
+    """Prefill model-FLOPs utilisation, and how much of the work is attention."""
+    rows = sorted((r for r in roofline if r.get("prefill_mfu") is not None and r["batch_size"] == 1
+                   and r["precision"] == "bf16"), key=lambda r: r["context_length"])
+    by_ctx: dict[int, Mapping[str, Any]] = {}
+    for r in rows:
+        by_ctx.setdefault(r["context_length"], r)
+    rows = [by_ctx[c] for c in sorted(by_ctx)]
+    if len(rows) < 2:
+        return None
+    x = [r["context_length"] for r in rows]
+    fig, axes = plt.subplots(2, 1, figsize=(7.2, 6.0), sharex=True)
+    axes[0].plot(x, [r["prefill_mfu"] * 100 for r in rows], marker="o", color=CATEGORICAL[0])
+    for xi, r in zip(x, rows):
+        axes[0].annotate(f"{r['prefill_mfu'] * 100:.0f}%", xy=(xi, r["prefill_mfu"] * 100), xytext=(0, 6),
+                         textcoords="offset points", ha="center", fontsize=8, color=TEXT_PRIMARY)
+    axes[0].set_ylim(0, 105)
+    axes[0].set_ylabel("MFU (% of measured GEMM peak)")
+    axes[0].set_title("Prefill: model-FLOPs utilisation against prompt length")
+    axes[1].plot(x, [r["attention_share_of_prefill_flops"] * 100 for r in rows], marker="o", color=CATEGORICAL[3])
+    axes[1].set_ylabel("attention share of FLOPs (%)")
+    axes[1].set_xlabel("prompt length (tokens)")
+    axes[1].set_title("Why it falls again: the quadratic term's share of the work")
+    axes[1].set_xscale("log", base=2)
+    axes[1].xaxis.set_major_formatter(_context_formatter())
+    axes[1].set_xticks(x)
+    for ax in axes:
+        _despine(ax)
+    fig.tight_layout()
+    return _finish(fig, path, subtitle)
+
+
+def cross_scale_layers(runs: Mapping[str, Sequence[Mapping[str, Any]]], path: Path,
+                       subtitle: str = "") -> Path | None:
+    """Held-out separation by relative depth, one line per model size."""
+    if len(runs) < 2:
+        return None
+    fig, ax = plt.subplots(figsize=(7.2, 4.2))
+    for i, (label, layers) in enumerate(sorted(runs.items())):
+        ordered = sorted(layers, key=lambda r: r["layer"])
+        n = len(ordered)
+        ax.plot([r["layer"] / (n - 1) for r in ordered], [r["test"]["cohens_d"] for r in ordered],
+                marker="o", markersize=4, color=CATEGORICAL[(0, 7, 2)[i % 3]], label=label)
+    ax.set_xlabel("relative depth (block index / last block)")
+    ax.set_ylabel("held-out Cohen's d")
+    ax.set_title("The refusal direction emerges at a similar relative depth")
+    ax.legend(loc="upper left")
+    _despine(ax)
+    fig.tight_layout()
     return _finish(fig, path, subtitle)

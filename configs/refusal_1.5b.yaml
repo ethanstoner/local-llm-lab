@@ -1,0 +1,41 @@
+# Phase 5 replicated on Qwen2.5-1.5B-Instruct, to separate model-specific findings from
+# general ones. Identical to configs/refusal.yaml apart from the model and the name.
+#
+#   python -m src.interpretability.run --config configs/refusal_1.5b.yaml
+#
+# This reproduces the *measurement* half of Arditi et al. (2024), "Refusal in Language
+# Models Is Mediated by a Single Direction". It computes a difference-in-means direction
+# per layer and reports how well held-out prompts separate along it. It deliberately
+# stops before any intervention: no weight edits, no directional ablation, no steering.
+
+experiment:
+  name: phase5_refusal_direction_1.5b
+  seed: 1234
+  output_root: results
+  deterministic: true
+  notes: >
+    Direction fitted on a training split and evaluated on a held-out split, so the
+    reported separation is not the training objective read back to itself.
+
+model:
+  id: Qwen/Qwen2.5-1.5B-Instruct
+  revision: main
+  local_path: models/Qwen2.5-1.5B-Instruct
+  attn_implementation: auto
+
+monitoring:
+  enabled: true
+  sample_interval_s: 0.1
+
+interpretability:
+  precision: bf16
+  layers: all
+  aggregation: last_token
+  n_prompts_per_class: 100
+  test_fraction: 0.3
+  save_activations: true
+  harmful_source: jbb
+  harmless_source: jbb
+  run_refusal_behaviour_check: true
+  refusal_check_max_new_tokens: 24
+  refusal_check_n_prompts: 40
