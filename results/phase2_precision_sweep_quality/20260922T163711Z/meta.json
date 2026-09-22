@@ -1,0 +1,112 @@
+{
+  "experiment": "phase2_precision_sweep_quality",
+  "timestamp_utc": "2026-09-22T16:37:11+00:00",
+  "host": {
+    "platform": "Windows-11-10.0.26200-SP0",
+    "processor": "AMD64 Family 26 Model 68 Stepping 0, AuthenticAMD",
+    "python_version": "3.12.10",
+    "python_executable": "C:\\Users\\ethan\\Desktop\\Coding Projects\\local-llm-lab\\venv\\Scripts\\python.exe"
+  },
+  "gpu": {
+    "available": true,
+    "index": 0,
+    "name": "NVIDIA GeForce RTX 4090",
+    "compute_capability": "8.9",
+    "total_memory_mib": 24563.5,
+    "multi_processor_count": 128,
+    "free_memory_mib_before_load": 23036.0,
+    "used_by_other_processes_mib": 1527.5,
+    "cuda_runtime": "12.4",
+    "cudnn_version": 90100,
+    "driver_version": "610.88"
+  },
+  "packages": {
+    "torch": "2.6.0+cu124",
+    "transformers": "4.57.0",
+    "accelerate": "1.12.0",
+    "bitsandbytes": "0.49.0",
+    "safetensors": "0.7.0",
+    "numpy": "2.2.6",
+    "datasets": "4.5.0",
+    "nvidia-ml-py": "13.610.43"
+  },
+  "git": {
+    "commit": "f22c30945dd3c45a4624c5636776f28819464767",
+    "dirty": true,
+    "branch": "main"
+  },
+  "config": {
+    "experiment": {
+      "name": "phase2_precision_sweep",
+      "seed": 1234,
+      "output_root": "results",
+      "notes": "Precision comparison at a fixed 512-token context. Quality metrics come from src.evaluation.run, which compares each quantized model against the bf16 reference.\n",
+      "deterministic": false
+    },
+    "model": {
+      "id": "Qwen/Qwen2.5-7B-Instruct",
+      "revision": "main",
+      "trust_remote_code": false,
+      "attn_implementation": "auto",
+      "tokenizer_id": null,
+      "local_path": "models/Qwen2.5-7B-Instruct"
+    },
+    "benchmark": {
+      "precisions": [
+        "bf16",
+        "fp16",
+        "int8",
+        "nf4",
+        "fp32"
+      ],
+      "context_lengths": [
+        512,
+        2048
+      ],
+      "max_new_tokens": 128,
+      "repeats": 3,
+      "warmup": 1,
+      "batch_size": 1
+    },
+    "monitoring": {
+      "enabled": true,
+      "sample_interval_s": 0.05
+    },
+    "evaluation": {
+      "reference_precision": "bf16",
+      "compare_precisions": [
+        "fp16",
+        "int8",
+        "nf4"
+      ],
+      "n_prompts": 32,
+      "max_new_tokens": 64,
+      "perplexity_tokens": 8192,
+      "perplexity_stride": 512
+    },
+    "interpretability": {
+      "precision": "bf16",
+      "layers": "all",
+      "aggregation": "last_token",
+      "n_prompts_per_class": 100,
+      "test_fraction": 0.3,
+      "save_activations": true,
+      "harmful_source": "jbb",
+      "harmless_source": "jbb",
+      "run_refusal_behaviour_check": true,
+      "refusal_check_max_new_tokens": 24,
+      "refusal_check_n_prompts": 32
+    },
+    "source_path": "configs\\precision_sweep.yaml"
+  },
+  "determinism": {
+    "seed": 1234,
+    "requested_deterministic": false,
+    "deterministic_algorithms": false,
+    "cudnn_deterministic": false,
+    "cudnn_benchmark": true,
+    "cublas_workspace_config": null,
+    "warnings": []
+  },
+  "run_dir": "C:\\Users\\ethan\\Desktop\\Coding Projects\\local-llm-lab\\results\\phase2_precision_sweep_quality\\20260922T163711Z"
+}

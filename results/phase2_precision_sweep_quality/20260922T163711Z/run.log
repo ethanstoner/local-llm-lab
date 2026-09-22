@@ -1,0 +1,8 @@
+09:37:11 | INFO    | src.utils.seed               | Seeded with 1234; deterministic algorithms NOT requested
+09:37:11 | INFO    | src.utils.datasets           | Loaded 32 harmful and 32 harmless prompts from bundled
+09:37:11 | INFO    | __main__                     | Evaluating with 32 fixed prompts
+09:37:12 | DEBUG   | src.models.attention         | Registered attention implementation 'sdpa_no_gqa'
+09:37:12 | DEBUG   | src.models.attention         | flash attention unavailable: No available kernel. Aborting execution.
+09:37:12 | INFO    | src.models.loader            | attn_implementation=auto resolved to 'sdpa_no_gqa'
+09:37:12 | INFO    | src.models.loader            | Loading Qwen/Qwen2.5-7B-Instruct at bf16 (bfloat16; the reference precision for this project.) onto cuda:0 from local files
+09:37:12 | DEBUG   | src.monitoring.gpu           | GPU sampling disabled by config

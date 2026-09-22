@@ -168,9 +168,12 @@ def run_sweep(
         device_index: CUDA device to use.
         validate_sync_overhead: Run the per-token-synchronization control measurement
             once, on the smallest context of the first working precision.
-        checkpoint: Called with the partial result after each precision finishes. A
-            long sweep should not be able to lose completed measurements to a crash in
-            a later cell, so the CLI uses this to write results incrementally.
+        checkpoint: Called with the partial result after *every cell*. A long sweep
+            must not be able to lose completed measurements to a crash - or to an
+            operator's Ctrl-C - in a later cell. Per-cell rather than per-precision
+            matters more than it sounds: an fp32 cell that exceeds VRAM can take twenty
+            minutes on a platform that pages instead of failing, and the cells already
+            measured should be on disk before it starts.
 
     Returns:
         A :class:`SweepResult` containing every cell, including failures.
@@ -235,6 +238,8 @@ def run_sweep(
             result.cells.append(
                 _run_cell(loaded, config, context_length, run_dir, device_index)
             )
+            if checkpoint is not None:
+                checkpoint(result)
 
         if validate_sync_overhead and "sync_overhead" not in result.validation:
             smallest = min(bench.context_lengths)
@@ -263,9 +268,6 @@ def run_sweep(
         del model_ref, tokenizer_ref, loaded
         freed = release_memory(device_index)
         logger.info("Unloaded %s; device now holds %.0f MiB", precision, freed["used_mib"] or -1)
-
-        if checkpoint is not None:
-            checkpoint(result)
 
     return result
 

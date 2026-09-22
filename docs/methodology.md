@@ -163,7 +163,11 @@ vectors. KL is asymmetric and the reference is deliberately the first argument: 
 measures the cost of substituting the candidate for the reference.
 
 **Teacher-forced agreement and perplexity.** A strided sliding window over a fixed
-corpus gives thousands of scored positions instead of dozens. Storing full distributions
+corpus gives ~1088 scored positions instead of the 32 the prompt-set comparisons use.
+The bundled corpus is 1089 tokens, so that is the ceiling; each run records its actual
+`n_positions` rather than assuming. Because it is a *paired* comparison over identical
+positions, relative differences between precisions are well determined even though the
+absolute perplexity has correspondingly wide uncertainty. Storing full distributions
 for all of them would run to gigabytes, so only two things are kept per position: the
 argmax token and the log-probability of the actual next token. Those are sufficient for
 top-1 agreement and for both perplexities, and neither is an approximation.
