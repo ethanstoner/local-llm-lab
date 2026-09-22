@@ -1,0 +1,8 @@
+batch_size,context_length,pair,identical,token_agreement,first_divergence_row0,tokens_compared
+1,128,sdpa_grouped_decode_vs_sdpa_no_gqa,True,1.0,,128
+1,512,sdpa_grouped_decode_vs_sdpa_no_gqa,True,1.0,,128
+1,1024,sdpa_grouped_decode_vs_sdpa_no_gqa,True,1.0,,128
+1,2048,sdpa_grouped_decode_vs_sdpa_no_gqa,False,0.3359,43,128
+1,4096,sdpa_grouped_decode_vs_sdpa_no_gqa,False,0.9375,116,128
+1,8192,sdpa_grouped_decode_vs_sdpa_no_gqa,False,0.375,48,128
+1,16384,sdpa_grouped_decode_vs_sdpa_no_gqa,True,1.0,,128

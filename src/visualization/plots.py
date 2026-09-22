@@ -951,12 +951,15 @@ def decode_backend_ab(summary: Sequence[Mapping[str, Any]], roofline: Sequence[M
             f"ceiling_{by_backend[backend].get(c, {}).get('traffic_model', 'ideal')}_tok_s") for c in x]
         if all(v is not None for v in model_ceiling):
             axes[0].plot(x, model_ceiling, color=color, linestyle="--", linewidth=1.0, alpha=0.7)
+    from matplotlib.lines import Line2D
+
     axes[0].set_ylabel("decode tokens / second")
     axes[0].set_ylim(bottom=0)
     axes[0].set_title("Single-stream decode against the bandwidth roofline")
-    axes[0].legend(loc="lower left", fontsize=8.5)
-    axes[0].annotate("dashed: each backend's modelled traffic", xy=(0.99, 0.97), xycoords="axes fraction",
-                     ha="right", va="top", fontsize=8, color=TEXT_SECONDARY)
+    handles, labels = axes[0].get_legend_handles_labels()
+    handles.append(Line2D([], [], color=TEXT_SECONDARY, linestyle="--", linewidth=1.0))
+    labels.append("roofline for each backend's modelled traffic (its colour)")
+    axes[0].legend(handles, labels, loc="lower left", fontsize=8.5)
 
     other, base = backends[1], backends[0]
     key = f"{other}_vs_{base}_ratio"
@@ -990,19 +993,22 @@ def batch_throughput(summary: Sequence[Mapping[str, Any]], roofline: Sequence[Ma
         return None
     x = [s["batch_size"] for s in rows]
     fig, axes = plt.subplots(1, 2, figsize=(11.6, 4.4))
+    paged_any = False
     for backend in backends:
         color = BACKEND_COLORS.get(backend, NEUTRAL_MARK)
-        thr = [s.get(f"{backend}_throughput_tok_s_median") for s in rows]
-        per = [s.get(f"{backend}_decode_tok_s_median") for s in rows]
-        pts = [(xi, t) for xi, t in zip(x, thr) if t is not None]
-        if pts:
-            axes[0].plot(*zip(*pts), marker="o", color=color, label=BACKEND_LABELS.get(backend, backend))
-            last = pts[-1]
-            axes[0].annotate(f"{last[1]:,.0f}", xy=last, xytext=(4, 0), textcoords="offset points",
-                             va="center", fontsize=8.5, color=TEXT_PRIMARY)
-        pts = [(xi, p) for xi, p in zip(x, per) if p is not None]
-        if pts:
-            axes[1].plot(*zip(*pts), marker="o", color=color, label=BACKEND_LABELS.get(backend, backend))
+        for ax, key in ((axes[0], "throughput_tok_s_median"), (axes[1], "decode_tok_s_median")):
+            clean = [(s["batch_size"], s[f"{backend}_{key}"]) for s in rows
+                     if s.get(f"{backend}_{key}") is not None and not s.get(f"{backend}_paging_suspected")]
+            paged = [(s["batch_size"], s[f"{backend}_{key}"]) for s in rows
+                     if s.get(f"{backend}_{key}") is not None and s.get(f"{backend}_paging_suspected")]
+            if clean:
+                ax.plot(*zip(*clean), marker="o", color=color, label=BACKEND_LABELS.get(backend, backend))
+                if ax is axes[0]:
+                    ax.annotate(f"{clean[-1][1]:,.0f}", xy=clean[-1], xytext=(7, 0), textcoords="offset points", va="center",
+                                ha="left", fontsize=8.5, color=TEXT_PRIMARY)
+            if paged:
+                paged_any = True
+                ax.scatter(*zip(*paged), marker="o", facecolors="none", edgecolors=color, s=40, zorder=3)
     ref = {r["batch_size"]: r for r in roofline if r["attn_implementation"] == backends[-1]}
     ideal = [(b, ref[b]["ceiling_ideal_tok_s"] * b) for b in x if b in ref]
     if ideal:
@@ -1010,8 +1016,11 @@ def batch_throughput(summary: Sequence[Mapping[str, Any]], roofline: Sequence[Ma
                      label="bandwidth roofline (weights + KV)")
         compute = next(iter(ref.values()))["compute_ceiling_throughput_tok_s"]
         axes[0].axhline(compute, color=TEXT_SECONDARY, linestyle="--", linewidth=1.0)
-        axes[0].annotate(f"compute roofline {compute:,.0f} tok/s", xy=(x[0], compute), xytext=(2, -11),
-                         textcoords="offset points", fontsize=8, color=TEXT_SECONDARY)
+        axes[0].annotate(f"compute roofline {compute:,.0f} tok/s", xy=(x[-1], compute), xytext=(0, -12),
+                         textcoords="offset points", ha="right", fontsize=8, color=TEXT_SECONDARY)
+    if paged_any:
+        axes[1].annotate("hollow: VRAM full, driver paging - not a valid measurement",
+                         xy=(0.02, 0.04), xycoords="axes fraction", fontsize=8, color=TEXT_SECONDARY)
     for ax in axes:
         ax.set_xscale("log", base=2)
         ax.set_xticks(x)
@@ -1021,7 +1030,7 @@ def batch_throughput(summary: Sequence[Mapping[str, Any]], roofline: Sequence[Ma
     axes[0].set_yscale("log")
     axes[0].set_ylabel("aggregate tokens / second")
     axes[0].set_title("Batching: throughput")
-    axes[0].legend(loc="upper left", fontsize=8.5)
+    axes[0].legend(loc="lower right", fontsize=8.5)
     axes[1].set_ylabel("tokens / second per sequence")
     axes[1].set_ylim(bottom=0)
     axes[1].set_title("Batching: what each user sees")

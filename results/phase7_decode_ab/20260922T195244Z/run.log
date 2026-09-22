@@ -1,0 +1,92 @@
+12:52:44 | INFO    | src.utils.seed               | Seeded with 1234; deterministic algorithms NOT requested
+12:52:44 | DEBUG   | src.models.attention         | Registered attention implementation 'sdpa_no_gqa'
+12:52:44 | DEBUG   | src.models.attention         | Registered attention implementation 'sdpa_grouped_decode'
+12:52:44 | DEBUG   | src.models.attention         | Registered attention implementation 'fp32_reference'
+12:52:44 | INFO    | src.models.loader            | Loading Qwen/Qwen2.5-7B-Instruct at bf16 (bfloat16; the reference precision for this project.) onto cuda:0 from local files
+12:52:44 | DEBUG   | src.monitoring.gpu           | GPU sampling disabled by config
+12:52:51 | INFO    | src.models.loader            | Loaded in 6.97s | weights 14526 MiB | device idle 16078 MiB (baseline 1528 MiB)
+12:53:57 | INFO    | __main__                     | r0 sdpa_no_gqa b1 c128                   decode  41.36 tok/s  x1   =     41.4 tok/s  peak   14562 MiB
+12:54:00 | INFO    | __main__                     | r0 sdpa_grouped_decode b1 c128           decode  41.54 tok/s  x1   =     41.5 tok/s  peak   14562 MiB
+12:54:03 | INFO    | __main__                     | r0 sdpa_no_gqa b1 c512                   decode  40.90 tok/s  x1   =     40.9 tok/s  peak   14635 MiB
+12:54:06 | INFO    | __main__                     | r0 sdpa_grouped_decode b1 c512           decode  41.82 tok/s  x1   =     41.8 tok/s  peak   14635 MiB
+12:54:10 | INFO    | __main__                     | r0 sdpa_no_gqa b1 c1024                  decode  39.63 tok/s  x1   =     39.6 tok/s  peak   14736 MiB
+12:54:13 | INFO    | __main__                     | r0 sdpa_grouped_decode b1 c1024          decode  40.81 tok/s  x1   =     40.8 tok/s  peak   14736 MiB
+12:54:17 | INFO    | __main__                     | r0 sdpa_no_gqa b1 c2048                  decode  36.23 tok/s  x1   =     36.2 tok/s  peak   14929 MiB
+12:54:21 | INFO    | __main__                     | r0 sdpa_grouped_decode b1 c2048          decode  39.06 tok/s  x1   =     39.1 tok/s  peak   14929 MiB
+12:54:26 | INFO    | __main__                     | r0 sdpa_no_gqa b1 c4096                  decode  32.22 tok/s  x1   =     32.2 tok/s  peak   15319 MiB
+12:54:31 | INFO    | __main__                     | r0 sdpa_grouped_decode b1 c4096          decode  37.83 tok/s  x1   =     37.8 tok/s  peak   15320 MiB
+12:54:38 | INFO    | __main__                     | r0 sdpa_no_gqa b1 c8192                  decode  26.66 tok/s  x1   =     26.7 tok/s  peak   16102 MiB
+12:54:43 | INFO    | __main__                     | r0 sdpa_grouped_decode b1 c8192          decode  38.37 tok/s  x1   =     38.4 tok/s  peak   16102 MiB
+12:54:54 | INFO    | __main__                     | r0 sdpa_no_gqa b1 c16384                 decode  19.15 tok/s  x1   =     19.1 tok/s  peak   17666 MiB
+12:55:03 | INFO    | __main__                     | r0 sdpa_grouped_decode b1 c16384         decode  30.23 tok/s  x1   =     30.2 tok/s  peak   17666 MiB
+12:55:06 | INFO    | __main__                     | r1 sdpa_grouped_decode b1 c128           decode  43.51 tok/s  x1   =     43.5 tok/s  peak   14562 MiB
+12:55:09 | INFO    | __main__                     | r1 sdpa_no_gqa b1 c128                   decode  42.97 tok/s  x1   =     43.0 tok/s  peak   14562 MiB
+12:55:13 | INFO    | __main__                     | r1 sdpa_grouped_decode b1 c512           decode  41.89 tok/s  x1   =     41.9 tok/s  peak   14635 MiB
+12:55:16 | INFO    | __main__                     | r1 sdpa_no_gqa b1 c512                   decode  40.03 tok/s  x1   =     40.0 tok/s  peak   14635 MiB
+12:55:20 | INFO    | __main__                     | r1 sdpa_grouped_decode b1 c1024          decode  40.66 tok/s  x1   =     40.7 tok/s  peak   14736 MiB
+12:55:23 | INFO    | __main__                     | r1 sdpa_no_gqa b1 c1024                  decode  39.70 tok/s  x1   =     39.7 tok/s  peak   14736 MiB
+12:55:27 | INFO    | __main__                     | r1 sdpa_grouped_decode b1 c2048          decode  36.77 tok/s  x1   =     36.8 tok/s  peak   14929 MiB
+12:55:31 | INFO    | __main__                     | r1 sdpa_no_gqa b1 c2048                  decode  38.34 tok/s  x1   =     38.3 tok/s  peak   14929 MiB
+12:55:35 | INFO    | __main__                     | r1 sdpa_grouped_decode b1 c4096          decode  37.08 tok/s  x1   =     37.1 tok/s  peak   15319 MiB
+12:55:40 | INFO    | __main__                     | r1 sdpa_no_gqa b1 c4096                  decode  33.65 tok/s  x1   =     33.7 tok/s  peak   15320 MiB
+12:55:46 | INFO    | __main__                     | r1 sdpa_grouped_decode b1 c8192          decode  37.10 tok/s  x1   =     37.1 tok/s  peak   16102 MiB
+12:55:53 | INFO    | __main__                     | r1 sdpa_no_gqa b1 c8192                  decode  27.23 tok/s  x1   =     27.2 tok/s  peak   16102 MiB
+12:56:01 | INFO    | __main__                     | r1 sdpa_grouped_decode b1 c16384         decode  30.31 tok/s  x1   =     30.3 tok/s  peak   17666 MiB
+12:56:13 | INFO    | __main__                     | r1 sdpa_no_gqa b1 c16384                 decode  19.34 tok/s  x1   =     19.3 tok/s  peak   17666 MiB
+12:56:16 | INFO    | __main__                     | r2 sdpa_no_gqa b1 c128                   decode  44.31 tok/s  x1   =     44.3 tok/s  peak   14562 MiB
+12:56:19 | INFO    | __main__                     | r2 sdpa_grouped_decode b1 c128           decode  43.92 tok/s  x1   =     43.9 tok/s  peak   14562 MiB
+12:56:22 | INFO    | __main__                     | r2 sdpa_no_gqa b1 c512                   decode  42.57 tok/s  x1   =     42.6 tok/s  peak   14635 MiB
+12:56:25 | INFO    | __main__                     | r2 sdpa_grouped_decode b1 c512           decode  43.06 tok/s  x1   =     43.1 tok/s  peak   14635 MiB
+12:56:29 | INFO    | __main__                     | r2 sdpa_no_gqa b1 c1024                  decode  40.33 tok/s  x1   =     40.3 tok/s  peak   14736 MiB
+12:56:32 | INFO    | __main__                     | r2 sdpa_grouped_decode b1 c1024          decode  42.37 tok/s  x1   =     42.4 tok/s  peak   14736 MiB
+12:56:36 | INFO    | __main__                     | r2 sdpa_no_gqa b1 c2048                  decode  36.95 tok/s  x1   =     37.0 tok/s  peak   14929 MiB
+12:56:40 | INFO    | __main__                     | r2 sdpa_grouped_decode b1 c2048          decode  37.79 tok/s  x1   =     37.8 tok/s  peak   14929 MiB
+12:56:45 | INFO    | __main__                     | r2 sdpa_no_gqa b1 c4096                  decode  30.52 tok/s  x1   =     30.5 tok/s  peak   15319 MiB
+12:56:49 | INFO    | __main__                     | r2 sdpa_grouped_decode b1 c4096          decode  37.98 tok/s  x1   =     38.0 tok/s  peak   15320 MiB
+12:56:56 | INFO    | __main__                     | r2 sdpa_no_gqa b1 c8192                  decode  27.69 tok/s  x1   =     27.7 tok/s  peak   16102 MiB
+12:57:01 | INFO    | __main__                     | r2 sdpa_grouped_decode b1 c8192          decode  37.83 tok/s  x1   =     37.8 tok/s  peak   16102 MiB
+12:57:12 | INFO    | __main__                     | r2 sdpa_no_gqa b1 c16384                 decode  19.61 tok/s  x1   =     19.6 tok/s  peak   17666 MiB
+12:57:21 | INFO    | __main__                     | r2 sdpa_grouped_decode b1 c16384         decode  30.65 tok/s  x1   =     30.7 tok/s  peak   17666 MiB
+12:57:24 | INFO    | __main__                     | r3 sdpa_grouped_decode b1 c128           decode  43.33 tok/s  x1   =     43.3 tok/s  peak   14562 MiB
+12:57:28 | INFO    | __main__                     | r3 sdpa_no_gqa b1 c128                   decode  41.08 tok/s  x1   =     41.1 tok/s  peak   14562 MiB
+12:57:31 | INFO    | __main__                     | r3 sdpa_grouped_decode b1 c512           decode  43.12 tok/s  x1   =     43.1 tok/s  peak   14635 MiB
+12:57:34 | INFO    | __main__                     | r3 sdpa_no_gqa b1 c512                   decode  41.81 tok/s  x1   =     41.8 tok/s  peak   14635 MiB
+12:57:37 | INFO    | __main__                     | r3 sdpa_grouped_decode b1 c1024          decode  41.60 tok/s  x1   =     41.6 tok/s  peak   14736 MiB
+12:57:41 | INFO    | __main__                     | r3 sdpa_no_gqa b1 c1024                  decode  39.61 tok/s  x1   =     39.6 tok/s  peak   14736 MiB
+12:57:45 | INFO    | __main__                     | r3 sdpa_grouped_decode b1 c2048          decode  39.27 tok/s  x1   =     39.3 tok/s  peak   14929 MiB
+12:57:48 | INFO    | __main__                     | r3 sdpa_no_gqa b1 c2048                  decode  38.71 tok/s  x1   =     38.7 tok/s  peak   14929 MiB
+12:57:53 | INFO    | __main__                     | r3 sdpa_grouped_decode b1 c4096          decode  40.05 tok/s  x1   =     40.1 tok/s  peak   15319 MiB
+12:57:58 | INFO    | __main__                     | r3 sdpa_no_gqa b1 c4096                  decode  32.46 tok/s  x1   =     32.5 tok/s  peak   15320 MiB
+12:58:03 | INFO    | __main__                     | r3 sdpa_grouped_decode b1 c8192          decode  35.82 tok/s  x1   =     35.8 tok/s  peak   16102 MiB
+12:58:10 | INFO    | __main__                     | r3 sdpa_no_gqa b1 c8192                  decode  26.52 tok/s  x1   =     26.5 tok/s  peak   16102 MiB
+12:58:19 | INFO    | __main__                     | r3 sdpa_grouped_decode b1 c16384         decode  29.60 tok/s  x1   =     29.6 tok/s  peak   17666 MiB
+12:58:31 | INFO    | __main__                     | r3 sdpa_no_gqa b1 c16384                 decode  19.03 tok/s  x1   =     19.0 tok/s  peak   17666 MiB
+12:58:34 | INFO    | __main__                     | r4 sdpa_no_gqa b1 c128                   decode  43.36 tok/s  x1   =     43.4 tok/s  peak   14562 MiB
+12:58:37 | INFO    | __main__                     | r4 sdpa_grouped_decode b1 c128           decode  43.63 tok/s  x1   =     43.6 tok/s  peak   14562 MiB
+12:58:40 | INFO    | __main__                     | r4 sdpa_no_gqa b1 c512                   decode  41.72 tok/s  x1   =     41.7 tok/s  peak   14635 MiB
+12:58:43 | INFO    | __main__                     | r4 sdpa_grouped_decode b1 c512           decode  42.85 tok/s  x1   =     42.8 tok/s  peak   14635 MiB
+12:58:47 | INFO    | __main__                     | r4 sdpa_no_gqa b1 c1024                  decode  40.82 tok/s  x1   =     40.8 tok/s  peak   14736 MiB
+12:58:50 | INFO    | __main__                     | r4 sdpa_grouped_decode b1 c1024          decode  41.34 tok/s  x1   =     41.3 tok/s  peak   14736 MiB
+12:58:54 | INFO    | __main__                     | r4 sdpa_no_gqa b1 c2048                  decode  38.37 tok/s  x1   =     38.4 tok/s  peak   14929 MiB
+12:58:58 | INFO    | __main__                     | r4 sdpa_grouped_decode b1 c2048          decode  41.70 tok/s  x1   =     41.7 tok/s  peak   14929 MiB
+12:59:02 | INFO    | __main__                     | r4 sdpa_no_gqa b1 c4096                  decode  33.55 tok/s  x1   =     33.5 tok/s  peak   15319 MiB
+12:59:07 | INFO    | __main__                     | r4 sdpa_grouped_decode b1 c4096          decode  37.61 tok/s  x1   =     37.6 tok/s  peak   15320 MiB
+12:59:14 | INFO    | __main__                     | r4 sdpa_no_gqa b1 c8192                  decode  26.46 tok/s  x1   =     26.5 tok/s  peak   16102 MiB
+12:59:19 | INFO    | __main__                     | r4 sdpa_grouped_decode b1 c8192          decode  37.43 tok/s  x1   =     37.4 tok/s  peak   16102 MiB
+12:59:31 | INFO    | __main__                     | r4 sdpa_no_gqa b1 c16384                 decode  18.66 tok/s  x1   =     18.7 tok/s  peak   17666 MiB
+12:59:40 | INFO    | __main__                     | r4 sdpa_grouped_decode b1 c16384         decode  29.73 tok/s  x1   =     29.7 tok/s  peak   17666 MiB
+12:59:44 | INFO    | __main__                     | Fidelity c128    sdpa_no_gqa: mean KL 6.82e-04 nats, top-1 0.984
+12:59:44 | INFO    | __main__                     | Fidelity c128    sdpa_grouped_decode: mean KL 6.82e-04 nats, top-1 0.984
+12:59:49 | INFO    | __main__                     | Fidelity c512    sdpa_no_gqa: mean KL 7.73e-04 nats, top-1 1.000
+12:59:49 | INFO    | __main__                     | Fidelity c512    sdpa_grouped_decode: mean KL 7.73e-04 nats, top-1 1.000
+12:59:54 | INFO    | __main__                     | Fidelity c1024   sdpa_no_gqa: mean KL 6.15e-04 nats, top-1 0.984
+12:59:54 | INFO    | __main__                     | Fidelity c1024   sdpa_grouped_decode: mean KL 6.15e-04 nats, top-1 0.984
+12:59:59 | INFO    | __main__                     | Fidelity c2048   sdpa_no_gqa: mean KL 1.60e-04 nats, top-1 1.000
+13:00:00 | INFO    | __main__                     | Fidelity c2048   sdpa_grouped_decode: mean KL 1.15e-04 nats, top-1 1.000
+13:00:06 | INFO    | __main__                     | Fidelity c4096   sdpa_no_gqa: mean KL 1.08e-04 nats, top-1 1.000
+13:00:06 | INFO    | __main__                     | Fidelity c4096   sdpa_grouped_decode: mean KL 9.29e-05 nats, top-1 1.000
+13:00:16 | INFO    | __main__                     | Fidelity c8192   sdpa_no_gqa: mean KL 8.10e-05 nats, top-1 1.000
+13:00:16 | INFO    | __main__                     | Fidelity c8192   sdpa_grouped_decode: mean KL 1.42e-04 nats, top-1 1.000
+13:00:33 | INFO    | __main__                     | Fidelity c16384  sdpa_no_gqa: mean KL 1.15e-04 nats, top-1 1.000
+13:00:33 | INFO    | __main__                     | Fidelity c16384  sdpa_grouped_decode: mean KL 7.17e-05 nats, top-1 1.000
+13:00:33 | DEBUG   | src.models.attention         | flash attention unavailable: No available kernel. Aborting execution.

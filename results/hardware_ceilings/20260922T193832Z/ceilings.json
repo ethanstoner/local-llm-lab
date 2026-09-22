@@ -1,0 +1,105 @@
+{
+  "meta": {
+    "experiment": "hardware_ceilings",
+    "timestamp_utc": "2026-09-22T19:38:32+00:00",
+    "host": {
+      "platform": "Windows-11-10.0.26200-SP0",
+      "processor": "AMD64 Family 26 Model 68 Stepping 0, AuthenticAMD",
+      "python_version": "3.12.10",
+      "python_executable": "C:\\Users\\ethan\\Desktop\\Coding Projects\\local-llm-lab\\venv\\Scripts\\python.exe"
+    },
+    "gpu": {
+      "available": true,
+      "index": 0,
+      "name": "NVIDIA GeForce RTX 4090",
+      "compute_capability": "8.9",
+      "total_memory_mib": 24563.5,
+      "multi_processor_count": 128,
+      "free_memory_mib_before_load": 23036.0,
+      "used_by_other_processes_mib": 1527.5,
+      "cuda_runtime": "12.4",
+      "cudnn_version": 90100,
+      "driver_version": "610.88"
+    },
+    "packages": {
+      "torch": "2.6.0+cu124",
+      "transformers": "4.57.0",
+      "accelerate": "1.12.0",
+      "bitsandbytes": "0.49.0",
+      "safetensors": "0.7.0",
+      "numpy": "2.2.6",
+      "datasets": "4.5.0",
+      "nvidia-ml-py": "13.610.43"
+    },
+    "git": {
+      "commit": "6d9f424f13fd8a0ecca4f71487b6fcf727d7f945",
+      "dirty": true,
+      "branch": "main"
+    }
+  },
+  "stream_read": {
+    "bytes": 2147483648,
+    "unit": "GB/s",
+    "median_s": 0.0022671,
+    "best_s": 0.0022506,
+    "median_rate": 947.23,
+    "best_rate": 954.17
+  },
+  "device_copy": {
+    "bytes_moved": 4294967296,
+    "unit": "GB/s",
+    "median_s": 0.0050314,
+    "best_s": 0.0046694,
+    "median_rate": 853.63,
+    "best_rate": 919.8
+  },
+  "gemv": {
+    "mlp_up_3584x18944": {
+      "weight_bytes": 135790592,
+      "unit": "GB/s",
+      "median_s": 0.0001524,
+      "best_s": 0.0001464,
+      "median_rate": 891.3,
+      "best_rate": 927.33
+    },
+    "mlp_down_18944x3584": {
+      "weight_bytes": 135790592,
+      "unit": "GB/s",
+      "median_s": 0.0001536,
+      "best_s": 0.0001454,
+      "median_rate": 884.05,
+      "best_rate": 933.86
+    },
+    "attn_q_3584x3584": {
+      "weight_bytes": 25690112,
+      "unit": "GB/s",
+      "median_s": 2.26e-05,
+      "best_s": 1.64e-05,
+      "median_rate": 1138.75,
+      "best_rate": 1568.0
+    }
+  },
+  "gemm_bf16": {
+    "shape": [
+      8192,
+      8192,
+      8192
+    ],
+    "flops": 1099511627776.0,
+    "unit": "TFLOP/s",
+    "median_s": 0.0069821,
+    "best_s": 0.0064911,
+    "median_rate": 157.47,
+    "best_rate": 169.39
+  },
+  "spec_sheet": {
+    "bandwidth_gb_s": 1008.0,
+    "bf16_tflops": 165.2
+  },
+  "fraction_of_spec": {
+    "stream_read": 0.9397,
+    "gemv_mlp_up": 0.8842,
+    "gemm_bf16": 0.9532
+  },
+  "device_name": "NVIDIA GeForce RTX 4090"
+}
