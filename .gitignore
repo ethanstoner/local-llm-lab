@@ -15,7 +15,7 @@ results/**/activations/
 *.npy
 
 # Model weights never live in the repo
-models/
+/models/
 *.gguf
 *.bin
 
