@@ -1,0 +1,31 @@
+# Fast end-to-end check of the whole harness on a small model.
+# Downloads ~2.9 GB and finishes in under a minute on an RTX 4090.
+#
+#   python -m src.benchmarks.run --config configs/smoke.yaml
+
+experiment:
+  name: smoke
+  seed: 1234
+  output_root: results
+  deterministic: false
+  notes: >
+    Small-model smoke test. Exists to prove the plumbing works without spending
+    minutes on a 7B load; its numbers are not part of the reported results.
+
+model:
+  id: Qwen/Qwen2.5-1.5B-Instruct
+  revision: main
+  local_path: models/Qwen2.5-1.5B-Instruct
+  attn_implementation: sdpa
+
+benchmark:
+  precisions: [bf16]
+  context_lengths: [128, 512]
+  max_new_tokens: 32
+  repeats: 2
+  warmup: 1
+  batch_size: 1
+
+monitoring:
+  enabled: true
+  sample_interval_s: 0.05

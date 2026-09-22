@@ -1,0 +1,43 @@
+# Phase 2: what do 8-bit and 4-bit quantization actually buy, and what do they cost?
+#
+#   python -m src.benchmarks.run   --config configs/precision_sweep.yaml
+#   python -m src.evaluation.run   --config configs/precision_sweep.yaml
+#
+# fp32 is included on purpose. 7.6B parameters at four bytes each is ~30 GB, which does
+# not fit in 24 GB, so it should fail. A benchmark harness that cannot demonstrate its
+# own failure path is not trustworthy, and the recorded OOM is part of the result.
+
+experiment:
+  name: phase2_precision_sweep
+  seed: 1234
+  output_root: results
+  deterministic: false
+  notes: >
+    Precision comparison at a fixed 512-token context. Quality metrics come from
+    src.evaluation.run, which compares each quantized model against the bf16 reference.
+
+model:
+  id: Qwen/Qwen2.5-7B-Instruct
+  revision: main
+  local_path: models/Qwen2.5-7B-Instruct
+  attn_implementation: sdpa
+
+benchmark:
+  precisions: [bf16, fp16, int8, nf4, fp32]
+  context_lengths: [512, 2048]
+  max_new_tokens: 128
+  repeats: 3
+  warmup: 1
+  batch_size: 1
+
+monitoring:
+  enabled: true
+  sample_interval_s: 0.05
+
+evaluation:
+  reference_precision: bf16
+  compare_precisions: [fp16, int8, nf4]
+  n_prompts: 32
+  max_new_tokens: 64
+  perplexity_tokens: 8192
+  perplexity_stride: 512

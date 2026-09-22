@@ -1,0 +1,5 @@
+# Keep line endings stable across checkouts; the repo is authored with LF.
+* text=auto eol=lf
+*.ps1 text eol=crlf
+*.png binary
+*.safetensors binary

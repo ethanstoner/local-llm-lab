@@ -1,0 +1,38 @@
+[project]
+name = "local-llm-lab"
+version = "0.1.0"
+description = "A reproducible framework for benchmarking and probing open-weight LLMs on a single local GPU."
+requires-python = ">=3.12"
+readme = "README.md"
+
+dependencies = [
+    "torch==2.6.0+cu124",
+    "transformers==4.57.0",
+    "accelerate==1.12.0",
+    "safetensors==0.7.0",
+    "huggingface_hub>=0.34.0,<1.0",
+    "datasets==4.5.0",
+    "bitsandbytes==0.49.0",
+    "numpy==2.2.6",
+    "pandas==2.3.3",
+    "matplotlib==3.10.7",
+    "pyyaml==6.0.2",
+    "nvidia-ml-py",
+]
+
+[project.optional-dependencies]
+dev = ["pytest"]
+
+# torch's CUDA build is not on PyPI; scripts/setup_env.ps1 installs it from the cu124 index
+# before resolving the rest. `pip install -e .` alone will not find torch==2.6.0+cu124.
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "gpu: requires a CUDA device (deselect with '-m \"not gpu\"')",
+    "download: downloads model weights from the Hugging Face Hub",
+]
+filterwarnings = ["ignore::DeprecationWarning"]
+
+[tool.setuptools]
+packages = ["src"]

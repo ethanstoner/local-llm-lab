@@ -1,0 +1,13 @@
+08:00:23 | INFO    | __main__                     | Config: configs\smoke.yaml
+08:00:23 | INFO    | src.utils.seed               | Seeded with 1234; deterministic algorithms NOT requested
+08:00:23 | DEBUG   | src.utils.env                | git metadata unavailable: Command '['git', '-C', 'C:\\Users\\ethan\\Desktop\\Coding Projects\\local-llm-lab', 'rev-parse', 'HEAD']' returned non-zero exit status 128.
+08:00:23 | INFO    | __main__                     | GPU: NVIDIA GeForce RTX 4090 | 24564 MiB total | 1528 MiB already used by other processes
+08:00:24 | INFO    | src.models.loader            | Loading Qwen/Qwen2.5-1.5B-Instruct at bf16 (bfloat16; the reference precision for this project.) onto cuda:0 from local files
+08:00:25 | INFO    | src.models.loader            | Loaded in 1.60s | weights 2944 MiB | device idle 4530 MiB (baseline 1528 MiB)
+08:00:27 | INFO    | src.benchmarks.sweep         | bf16@ctx128 repeat 1/2 | ttft 27.3 ms | decode 46.7 tok/s | prefill 4399.3 tok/s
+08:00:28 | INFO    | src.benchmarks.sweep         | bf16@ctx128 repeat 2/2 | ttft 25.5 ms | decode 45.3 tok/s | prefill 5187.5 tok/s
+08:00:30 | INFO    | src.benchmarks.sweep         | bf16@ctx512 repeat 1/2 | ttft 31.4 ms | decode 41.7 tok/s | prefill 13474.2 tok/s
+08:00:30 | INFO    | src.benchmarks.sweep         | bf16@ctx512 repeat 2/2 | ttft 28.0 ms | decode 46.1 tok/s | prefill 17918.6 tok/s
+08:00:30 | INFO    | src.benchmarks.sweep         | Measuring per-token synchronization overhead at ctx=128
+08:00:35 | INFO    | src.benchmarks.sweep         | Unloaded bf16; device now holds 4560 MiB
+08:00:35 | INFO    | __main__                     | Sweep complete: 2/2 cells measured. Results in C:\Users\ethan\Desktop\Coding Projects\local-llm-lab\results\smoke\20260922T150023Z

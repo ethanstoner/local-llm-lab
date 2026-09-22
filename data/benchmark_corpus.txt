@@ -1,0 +1,65 @@
+The behaviour of a large language model on a single consumer graphics card is governed less by the
+elegance of its architecture than by the movement of bytes. A decoder-only transformer generating
+one token at a time spends most of its wall clock waiting for weights to travel from device memory
+into the streaming multiprocessors. Each generated token requires a full pass over every parameter
+in the network, and at batch size one there is almost no arithmetic intensity to hide that traffic
+behind. The result is a regime in which measured throughput tracks memory bandwidth far more closely
+than it tracks floating point capability, and in which a card advertising hundreds of teraflops
+delivers a rate that looks disappointing until the bottleneck is named correctly.
+
+Prompt processing behaves differently. When a prompt is first presented to the model, every token in
+it can be processed in parallel, so the attention and feed-forward computations become large matrix
+multiplications with excellent arithmetic intensity. This phase, usually called prefill, is compute
+bound rather than bandwidth bound. It scales close to linearly with prompt length for the projection
+layers and quadratically for the attention score computation, although modern fused attention kernels
+keep the quadratic term from dominating until context lengths grow well past a few thousand tokens.
+The practical consequence is that a benchmark reporting a single tokens-per-second figure is almost
+always hiding two very different rates behind one number.
+
+Between those two phases sits the key-value cache. During prefill the model stores, for every layer
+and every attention head, the key and value projections of each prompt token. During decoding it
+reads that cache and appends one entry per layer per step. The cache grows linearly with sequence
+length and linearly with the number of layers, and its size is one of the few memory costs that a
+practitioner can predict exactly from the model configuration. Grouped query attention reduces the
+cache dramatically by sharing key and value heads across several query heads, which is why a modern
+seven billion parameter model can hold a long conversation in a fraction of the memory that an older
+architecture of the same size would have demanded.
+
+Quantization changes the picture again. Storing weights at four or eight bits instead of sixteen cuts
+the volume of memory traffic per token, which in a bandwidth bound regime should translate directly
+into higher throughput. In practice the translation is imperfect, because quantized weights must be
+dequantized before they can participate in matrix multiplication, and that dequantization consumes
+both time and registers. Whether a given quantization scheme is faster than half precision therefore
+depends on how efficiently its kernels are written, on the shapes involved, and on whether the card
+has spare arithmetic capacity to spend on unpacking. It is entirely normal to observe a four bit
+configuration that uses a third of the memory and runs slower than the sixteen bit baseline it
+replaced. Reporting the memory saving without reporting the throughput cost would be misleading.
+
+Measurement itself deserves care. Operations dispatched to a graphics processor are asynchronous, so
+a timer stopped immediately after a launch records the time taken to enqueue work rather than the
+time taken to perform it. Any honest timing therefore brackets the region of interest with an explicit
+synchronization. The first execution of a given shape is also unrepresentative, because kernels must
+be selected, caches must be warmed, and memory pools must be grown. Discarding a warm-up iteration is
+not cheating; including it without saying so is. Similarly, a generation loop that stops early when
+the model emits an end-of-sequence marker will produce fewer tokens in less time, and dividing one by
+the other yields a rate that flatters the configuration which happened to stop soonest. Forcing a
+fixed number of generated tokens removes that confound entirely.
+
+Peak memory is reported in at least two incompatible ways. The tensor framework's allocator knows
+what it has handed out and what it holds in reserve, but it cannot see the driver context, the
+workspaces allocated by linear algebra libraries, or the memory consumed by unrelated processes
+sharing the same card. The driver, queried through the management library, sees all of it but cannot
+attribute any of it. A desktop machine running a browser and a compositor may have a gigabyte or two
+already committed before a single weight is loaded. A report that quotes only the allocator figure
+will understate the true requirement; a report that quotes only the driver figure will overstate the
+model's own footprint. Both belong in the record, along with the baseline measured before loading.
+
+Beyond performance, the same instrumentation opens a second line of inquiry. Because every layer of a
+transformer writes its output back into a shared residual stream, attaching a forward hook to a block
+yields a vector that represents the model's internal state at that depth for that token. Collecting
+such vectors across two carefully chosen sets of prompts, and comparing their distributions, is the
+basic move behind a large body of interpretability research. The difference between the mean
+activation on one set and the mean activation on another defines a direction in activation space, and
+the degree to which individual examples separate along that direction is a measurable quantity rather
+than a matter of interpretation. Whether such a direction is causally responsible for a behaviour is a
+separate and much harder question, one that requires intervention rather than observation.
