@@ -14,6 +14,7 @@ import torch
 
 from src.models.attention import (
     CUSTOM_IMPLEMENTATIONS,
+    SDPA_GROUPED_DECODE,
     SDPA_NO_GQA,
     backend_report,
     flash_attention_available,
@@ -62,7 +63,7 @@ def test_recommendation_follows_the_probes() -> None:
     if flash_attention_available():
         assert recommended == "sdpa"
     elif memory_efficient_available():
-        assert recommended == SDPA_NO_GQA
+        assert recommended == SDPA_GROUPED_DECODE
 
 
 def test_backend_report_shape() -> None:
