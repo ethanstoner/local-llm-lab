@@ -1,0 +1,40 @@
+# Phase 8: what does batching buy on one card?
+#
+#   python -m src.benchmarks.interleaved --config configs/batch_sweep.yaml
+#
+# Single-stream decoding reads every weight to produce one token. A batch of B shares
+# that read across B sequences, so until the arithmetic catches up with the memory
+# traffic, aggregate throughput should grow almost linearly with B. On this card the
+# measured ceilings put that crossover in the low hundreds for bf16 - well beyond the
+# batch sizes here - so any departure from linear scaling is overhead, not physics.
+#
+# The grid stops at batch 64 x 512 tokens so the KV cache and prefill activations stay
+# clear of the 24 GB limit; past it the Windows driver pages rather than failing, and
+# the harness would flag the cell rather than report it as a throughput.
+
+experiment:
+  name: phase8_batch_sweep
+  seed: 1234
+  output_root: results
+  deterministic: false
+
+model:
+  id: Qwen/Qwen2.5-7B-Instruct
+  revision: main
+  local_path: models/Qwen2.5-7B-Instruct
+  attn_implementation: sdpa_no_gqa
+
+benchmark:
+  precisions: [bf16]
+  context_lengths: [512]
+  max_new_tokens: 128
+  warmup: 1
+
+comparison:
+  backends: [sdpa_no_gqa, sdpa_grouped_decode]
+  batch_sizes: [1, 2, 4, 8, 16, 32, 64]
+  rounds: 3
+
+monitoring:
+  enabled: true
+  sample_interval_s: 0.1

@@ -1,0 +1,37 @@
+# Phase 7: does the grouped decode path beat sdpa_no_gqa, and by how much?
+#
+#   python -m src.benchmarks.interleaved --config configs/decode_ab.yaml
+#
+# Paired and order-balanced: the model is loaded once, every round measures both
+# backends at every context length, and the order alternates each round. The reported
+# effect is the median of the per-round ratios. See src/benchmarks/interleaved.py for
+# why a pair of separate sweeps is not good enough on a desktop machine.
+
+experiment:
+  name: phase7_decode_ab
+  seed: 1234
+  output_root: results
+  deterministic: false
+
+model:
+  id: Qwen/Qwen2.5-7B-Instruct
+  revision: main
+  local_path: models/Qwen2.5-7B-Instruct
+  attn_implementation: sdpa_no_gqa
+
+benchmark:
+  precisions: [bf16]
+  context_lengths: [128, 512, 1024, 2048, 4096, 8192, 16384]
+  max_new_tokens: 128
+  warmup: 1
+
+comparison:
+  backends: [sdpa_no_gqa, sdpa_grouped_decode]
+  batch_sizes: [1]
+  rounds: 5
+  fidelity_steps: 64
+  fidelity_reference: fp32_reference
+
+monitoring:
+  enabled: true
+  sample_interval_s: 0.1

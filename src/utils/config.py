@@ -26,6 +26,7 @@ VALID_ATTN_IMPLEMENTATIONS = (
     "sdpa",
     "sdpa_no_gqa",
     "sdpa_grouped_decode",
+    "fp32_reference",
     "eager",
     "flash_attention_2",
 )
@@ -233,6 +234,44 @@ class InterventionConfig:
 
 
 @dataclass(frozen=True)
+class ComparisonConfig:
+    """An interleaved comparison over attention backends, batch sizes and contexts.
+
+    Unlike a sweep, which measures one configuration to completion before the next,
+    every round visits every cell and alternates the backend order (ABBA), so slow drift
+    in the machine's state - thermals, other applications - lands on both arms equally.
+    """
+
+    backends: tuple[str, ...] = ("sdpa_no_gqa",)
+    batch_sizes: tuple[int, ...] = (1,)
+    rounds: int = 3
+    paging_threshold: float = 0.97
+    fidelity_steps: int = 0
+    fidelity_reference: str | None = None
+
+    def __post_init__(self) -> None:
+        bad = [b for b in self.backends if b not in VALID_ATTN_IMPLEMENTATIONS or b == "auto"]
+        if bad:
+            raise ConfigError(f"comparison.backends has invalid entries {bad}")
+        if not self.backends:
+            raise ConfigError("comparison.backends must not be empty")
+        if len(set(self.backends)) != len(self.backends):
+            raise ConfigError("comparison.backends must not repeat")
+        if not self.batch_sizes or any(b < 1 for b in self.batch_sizes):
+            raise ConfigError("comparison.batch_sizes must be positive")
+        if self.rounds < 1:
+            raise ConfigError("comparison.rounds must be >= 1")
+        if self.fidelity_reference is not None and (
+            self.fidelity_reference not in VALID_ATTN_IMPLEMENTATIONS or self.fidelity_reference == "auto"
+        ):
+            raise ConfigError(f"comparison.fidelity_reference is invalid: {self.fidelity_reference!r}")
+        if self.fidelity_steps < 0:
+            raise ConfigError("comparison.fidelity_steps must be >= 0")
+        if not 0.5 < self.paging_threshold <= 1.0:
+            raise ConfigError("comparison.paging_threshold must be in (0.5, 1]")
+
+
+@dataclass(frozen=True)
 class LabConfig:
     """A whole experiment configuration."""
 
@@ -243,6 +282,7 @@ class LabConfig:
     evaluation: EvaluationConfig = field(default_factory=EvaluationConfig)
     interpretability: InterpretabilityConfig = field(default_factory=InterpretabilityConfig)
     intervention: InterventionConfig = field(default_factory=InterventionConfig)
+    comparison: ComparisonConfig = field(default_factory=ComparisonConfig)
     source_path: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
@@ -258,6 +298,7 @@ _SECTION_TYPES: dict[str, type] = {
     "evaluation": EvaluationConfig,
     "interpretability": InterpretabilityConfig,
     "intervention": InterventionConfig,
+    "comparison": ComparisonConfig,
 }
 
 #: Fields typed as tuples in the dataclasses but naturally written as YAML lists.
@@ -267,6 +308,8 @@ _TUPLE_FIELDS = {
     "compare_precisions",
     "source_layers",
     "addition_coefficients",
+    "backends",
+    "batch_sizes",
 }
 
 
