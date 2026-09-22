@@ -538,7 +538,7 @@ and batch size; nf4 at 0.27-0.34; int8 at 0.14-0.16. Prefill MFU 42% at 128 toke
 ablated; 95% under all three random directions. Layer 16 ablation: 2.5% refusal, 0.995x
 perplexity. Layers 21-24: 30-65% refusal, 1.26-1.36x perplexity. Addition at layer 20:
 3% -> 31% (1x) -> 95% (1.5x) -> 100% (2x) on harmless prompts; random vectors 0-2.5%.
-The pre-registered selection rule chose layer 27, whose addition is degenerate; reported
+The selection rule, fixed before the run, chose layer 27, whose addition is degenerate; reported
 as it ran (README section 6).
 
 **Phase 5 and 6, 1.5B:** refusal 100% harmful, 40% JBB benign, 2% bundled benign.
@@ -578,3 +578,32 @@ deselected. First GitHub Actions run (private repo, 2026-09-22): same result, 1m
    traffic model charges it two extra passes over the cache per step.
 4. **A second architecture family**, if a licence can be accepted interactively.
 5. **Decide on public release** - the repo is private on GitHub with CI passing.
+
+---
+
+## Session 3 - 2026-09-22 (evening)
+
+### An external review, and the layer-selection rule fixed
+
+A review of the published repository asked for a shorter landing page, narrower wording
+on two claims, an accurate test badge and a license; all done (README is now a landing
+page, the full write-up is `docs/results.md`, MIT license added).
+
+The Phase 6 layer-selection rule had applied only one of Arditi et al.'s three criteria
+and chose layer 27, whose added direction produces degenerate text. The rule now applies
+all three - depth below 80% of the network, ablation within the perplexity budget, and
+an addition screen requiring induced refusal above baseline (95% Wilson lower bound) on
+the JailbreakBench held-out split. Phase 6 was re-run at both scales:
+
+* **7B:** layers 0-12 fail the addition screen (2-5 of 30 induced against a 2/30
+  baseline); layers 14 and 16 pass; **layer 14** is selected. On the bundled prompts it
+  removes refusal completely (0/50) with fluent output, and adding it induces refusal on
+  38/50 harmless prompts at 1.5x and 48/50 at 2x; random vectors 0/50.
+* **1.5B:** the rule selects layer 16, as before.
+* Every condition shared with the first run reproduced exactly.
+
+The bundled set had been seen for every layer in the first run, so the corrected rule's
+bundled result is reported as a check, not an out-of-sample validation.
+
+Also: CI actions bumped from checkout@v4 / setup-python@v5 to v7 (Node 20 deprecation).
+Tests: 169 -> 172.

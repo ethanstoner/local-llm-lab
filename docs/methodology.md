@@ -342,10 +342,14 @@ norm (addition), and directions fitted at layers where Phase 5 found no separati
 result only counts if the refusal direction does something its controls do not.
 
 **Choosing the layer without leaking.** The observationally best layer need not be the
-causally best one. Among source layers whose ablation keeps corpus perplexity within 5%
-of the intact model, the one leaving the lowest refusal rate on the JailbreakBench
-held-out split is selected. The bundled prompt set, written independently and never
-used for fitting or selection, is then an untouched test of that choice.
+causally best one. Selection follows Arditi et al.'s criteria, on the JailbreakBench
+held-out split only: the layer lies in the first 80% of the network; ablating its
+direction keeps corpus perplexity within 5% of the intact model; and adding its
+direction raises harmless-prompt refusal above the intact rate (95% Wilson lower bound).
+Among eligible layers the lowest harmful-prompt refusal under ablation wins. The bundled
+prompt set plays no part in the choice. A first version that applied only the
+perplexity criterion selected a final layer whose added direction produced degenerate
+text; the other two criteria exclude it.
 
 **The split is enforced.** The runner rebuilds Phase 5's train/test split from its own
 config and refuses to start if the seed, prompt counts, sources, precision or model

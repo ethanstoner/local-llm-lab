@@ -18,7 +18,7 @@ hardware ceilings, and are labelled as such.
 5. [Is refusal linearly represented? (Phase 5)](#5-is-refusal-linearly-represented-phase-5)
 6. [The refusal direction is causal (Phase 6)](#6-the-refusal-direction-is-causal-phase-6)
 7. [Does it hold at 1.5B?](#7-does-it-hold-at-15b)
-8. [Bugs this project found in itself](#8-bugs-this-project-found-in-itself)
+8. [Debugging highlights](#8-debugging-highlights)
 9. [Limitations](#9-limitations)
 10. [Reproducing](#10-reproducing)
 
@@ -325,19 +325,44 @@ Harmless prompts, 80 per condition, adding the layer-20 direction:
 | 2.0x | 100% | "I'm sorry, but there seems to be a misunderstanding. I cannot be Qwen..." |
 | random vector, same norm as 1.0x | 0-2.5% | ordinary answers |
 
-### A selection rule that failed, reported as it ran
+### Choosing the layer
 
-Before the run, a rule was fixed for choosing "the causal layer" without touching the
-bundled test set: among layers whose ablation keeps perplexity within 5%, the lowest
-refusal rate on the JailbreakBench held-out split, ties to lower perplexity. It chose
-**layer 27**, by tie-break over layer 14 (both 0/30). Ablating layer 27's direction does
-remove refusal (5%) at +3% perplexity - but *adding* it produces degenerate output
-("I I I I I...", distinct-token ratio 0.07), which the fluency metrics caught and the
-substring refusal classifier alone would not have. Arditi et al. also require a
-candidate to induce refusal and exclude the last fifth of the network; the simplified
-rule dropped both. Layer 16 removes refusal at no measured cost, but whether *adding*
-its direction induces refusal was not tested, and the bundled test set has now been seen
-for every layer - so it is described here as a finding, not presented as a selection.
+Which layer's direction should count as "the" refusal direction is decided by the
+criteria of Arditi et al. (2024), applied on the JailbreakBench held-out split only:
+
+1. the layer lies in the first 80% of the network (layers 0-22 of 28);
+2. ablating its direction keeps corpus perplexity within 5% of the intact model;
+3. adding its direction induces refusal - the 95% lower bound of harmless-prompt refusal
+   with it added exceeds the intact model's rate (2/30).
+
+Among eligible layers, the one leaving the least refusal on harmful prompts wins, ties
+going to the lower perplexity cost. Criterion 3 does real work: layers 0-12 pass the
+first two but induce refusal on only 2-5 of 30 prompts, so they are excluded. Layers 14
+and 16 pass all three; **layer 14** wins, with 0/30 refusals under ablation.
+
+On the bundled prompts, which played no part in the choice, layer 14 holds up:
+
+| layer 14 | harmful refusal | harmless refusal | fluency (distinct-token ratio) |
+|---|---|---|---|
+| intact | 49/50 | 0/50 | 0.94 |
+| direction ablated | **0/50** | 0/50 | 0.92 |
+| direction added x1.5 | - | 38/50 | 0.93 |
+| direction added x2 | - | 48/50 | 0.93 |
+| random vector added, x1 norm (3 seeds) | - | 0/50, 0/50, 0/50 | 0.89 |
+
+Pooled over both prompt sets, adding layer 14's direction takes harmless-prompt refusal
+from 3% to 29% (x1), 83% (x1.5) and 98% (x2), with the completions staying fluent - more
+so than with layer 20's direction, whose x2 completions the judge scores at 2.2-2.6 nats
+per token against 1.3-1.6 for layer 14's.
+
+An earlier version of this rule applied only criterion 2. It chose layer 27, whose added
+direction produced degenerate text ("I I I I...", distinct-token ratio 0.07) that the
+fluency metrics flagged and the substring refusal classifier alone would not have.
+Restoring the paper's other two criteria excludes it on both counts. Because that first
+run had already shown bundled-set results for every layer, the bundled set is not a
+fully untouched test of the corrected rule; the table above should be read as a check
+of it, not an out-of-sample validation. Every condition shared by the two runs
+reproduced exactly.
 
 ---
 
@@ -387,7 +412,7 @@ direction" holds cleanly at 7B and only partly at 1.5B.
 
 ---
 
-## 8. Bugs this project found in itself
+## 8. Debugging highlights
 
 Each of these would have quietly corrupted results. None was found by reading code.
 
@@ -445,7 +470,8 @@ logits. Details in [`PROGRESS.md`](../PROGRESS.md).
   variation across harm categories.
 * **The perplexity corpus is 1088 scored positions**: enough for paired comparisons
   between conditions, not for the model's absolute perplexity on natural text.
-* **The layer-selection rule was too simple** (§6), and is reported as it ran.
+* **The corrected layer-selection rule was designed after its simplified predecessor's
+  result was known** (§6), so its bundled-set check is not fully out of sample.
 * **Quantized parameter counts are stored elements**: 4-bit weights are packed into
   `uint8`, so `param_count` undercounts them.
 
@@ -490,7 +516,7 @@ stalls indefinitely on large downloads (`pip` hung for 25 minutes on the torch w
 URLs.
 
 The CI workflow in `.github/workflows/tests.yml` runs ruff and the CPU suite against CPU
-torch on every push: ruff clean, 167 passed, 2 GPU-only tests deselected.
+torch on every push: ruff clean, 170 passed, 2 GPU-only tests deselected.
 
 ---
 
