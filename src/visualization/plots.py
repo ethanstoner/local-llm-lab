@@ -559,11 +559,16 @@ def layer_separation(
     best = max(ordered, key=lambda r: abs(r["test"]["cohens_d"]))
     for ax in axes:
         ax.axvline(best["layer"], color=GRID, linewidth=8, zorder=0)
+
+    # Flip the label inwards when the peak is near the right edge, or it overflows
+    # the axes and gets clipped.
+    on_the_right = best["layer"] > (x[0] + x[-1]) / 2
     axes[0].annotate(
         f"peak: layer {best['layer']}",
         xy=(best["layer"], max(test_d)),
-        xytext=(6, -2),
+        xytext=(-6 if on_the_right else 6, -2),
         textcoords="offset points",
+        ha="right" if on_the_right else "left",
         fontsize=9,
         color=TEXT_PRIMARY,
     )
