@@ -409,3 +409,171 @@ provenance onto every figure, and looking at the output.
    a precision a registry entry.
 6. **Re-run on Linux.** It would take the flash-attention path, which would quantify what
    the `sdpa_no_gqa` workaround costs against a build that does not need it.
+
+
+---
+
+## Session 2 - 2026-09-22 (afternoon)
+
+Goal: turn a complete but single-model, correlational, batch-1 study into a stronger
+piece - a causal test of the Phase 5 result, an analytical account of the benchmark
+numbers, and an optimisation that the analysis motivates. What happened instead of the
+plan is recorded as carefully as what went to plan.
+
+### Built
+
+| Area | Files |
+|---|---|
+| Phase 6 causal test | `src/interpretability/intervention.py`, `causal.py`, `intervene.py`, `configs/intervention.yaml` |
+| Hardware ceilings | `src/benchmarks/ceilings.py` |
+| Paired A/B harness | `src/benchmarks/interleaved.py`, `configs/decode_ab.yaml`, `configs/batch_sweep.yaml` |
+| Decode attention path | `sdpa_grouped_decode` and `fp32_reference` in `src/models/attention.py` |
+| Roofline analysis | `src/analysis/roofline.py` |
+| Cross-scale replication | `configs/refusal_1.5b.yaml`, `configs/intervention_1.5b.yaml` |
+| Figures | 7 new figure functions; render pinned to a primary model |
+| Tooling | ruff config and fixes; `.github/workflows/tests.yml`; `run_all.ps1` covers every phase |
+
+Tests: 119 -> 169, all CPU-only.
+
+### Problem 9: `src/models/` was never committed
+
+The `.gitignore` rule `models/` - meant for the weights directory - matched `src/models/`
+too. The loader, precision registry, OOM guard and attention backends existed only on
+this disk. Every commit failed at import from a fresh clone, verified by cloning the
+parent of the fix. **Fix:** anchor the rule as `/models/`; add the package exactly as it
+stood when the committed results were produced (the attention module was reconstructed
+by reversing this session's edits, and the original test suite passed against it from a
+fresh clone), then apply this session's changes as separate commits.
+
+### Problem 10: custom attention backends received no padding mask
+
+Found while wiring Phase 6. Transformers keeps attention *functions* and attention
+*mask builders* in separate registries; for a name missing from the mask registry,
+`masking_utils` passes `None`. `sdpa_no_gqa` was only registered as a function, so every
+left-padded batch attended to its pad tokens. On a tiny Llama, a padded prompt's
+last-token logits moved by up to 0.249 against the same prompt alone; `eager` and `sdpa`
+gave exactly 0.
+
+Impact: batch-1 benchmarks unaffected. Phase 2 prompt-level metrics, Phase 5 capture and
+the behaviour check were contaminated and were re-run:
+
+| quantity | before | after |
+|---|---|---|
+| Phase 5 harmful / benign refusal | 90% / 12.5% | 93% / 5% |
+| Phase 5 best layer, held-out d, AUROC | 20, 3.59, 0.982 | 20, 3.83, 0.990 |
+| Phase 5 layer 0 held-out d | 0.13 | 0.62 |
+| Phase 2 nf4 mean next-token KL | 0.058 | 0.120 |
+| Phase 2 fp16 exact continuations | 0.50 | 0.59 |
+
+The old unit test called the function with an explicit mask - a path the model never
+takes. The new test runs a padded batch through the real model, and was confirmed to
+fail with the registration removed. The in-flight Phase 6 run was killed and deleted.
+
+### Problem 11: a sequential A/B confounded by the desktop
+
+Two sweeps, one per attention backend, were started back to back. The baseline arm
+measured 35.5 tok/s at 128 tokens against Phase 1's 44.8 for the identical config - the
+desktop had several other applications active, and
+batch-1 decode is partly CPU-launch-bound. **Fix:** `src/benchmarks/interleaved.py`,
+which loads once, switches backend in place, alternates order each round and reports
+paired ratios. The sequential runs and their configs were deleted.
+
+### Problem 12: PyTorch's profiler on Windows, and a profile that paged
+
+`torch.profiler` with CUDA activity raised "Legacy CUDA profiling requires use_cpu=True":
+this build has no Kineto, and the fallback attributes device time to CPU ops including
+views, so a first profile summed 80 ms of "GPU time" into a 23.6 ms step. The same run's
+16k prefill kept full logits (16384 x 152064 bf16 = 5 GB), pushed the card into paging,
+and reported 92 ms per step against 54 ms in the benchmark. **Fix:** `logits_to_keep=1`
+and CUDA events recorded from module pre/post hooks. That breakdown (hook overhead
+included) put attention at 34.2 ms of a 56.5 ms step at 16k on `sdpa_no_gqa`, against
+9.8 ms of 30.3 ms with the grouped path.
+
+### Problem 13: bf16 attention scores
+
+The first `sdpa_grouped_decode` rounded scores to bf16, as eager attention does. It was
+64% faster at 16k and generated plausible text. The teacher-forced fidelity check
+against a float32-attention reference showed mean KL 0.09-0.14 nats with steps above
+8 nats, against ~1e-4 for SDPA. **Fix:** float32 scores (~6% of kernel time at 16k), plus
+the hybrid dispatch - folded SDPA below ~1.4k cached tokens, grouped fp32 matmul above -
+from a per-layer microbenchmark:
+
+| cached tokens | repeat_kv+SDPA | folded SDPA | grouped fp32 |
+|---|---|---|---|
+| 128 | 43 us | 26 us | 77 us |
+| 1024 | 69 us | 44 us | 72 us |
+| 2048 | 114 us | 92 us | 91 us |
+| 16384 | 995 us | 702 us | 153 us |
+
+### Problem 14: regression tests that passed on the bug
+
+The first bf16-score test passed with the bug re-injected: its inputs were float32. The
+second also passed: bf16 had rounded both test keys to 500.0, so 50/50 was correct. The
+third uses bf16-exact inputs whose scores (500.0, 500.5) bf16 cannot both represent, and
+fails on the old code with 0.500 against 0.378.
+
+### Problem 15: a figure drawing invalid data
+
+The first batch-throughput figure plotted batch 64 as ordinary points although the
+harness had flagged it as paging (24054 of 24564 MiB). Flagged cells are now drawn
+hollow and labelled, and excluded from the roofline analysis.
+
+### Measured results (session 2)
+
+**Ceilings:** 947 GB/s streaming read; 884-891 GB/s MLP GEMV; 157.5 TFLOP/s bf16 GEMM.
+
+**Phase 7, decode A/B, 5 paired rounds** (grouped vs sdpa_no_gqa): 1.01x at 128, 1.03x at
+512 and 1024, 1.02x at 2048, 1.17x at 4k, 1.37x at 8k, 1.57x at 16k (19.2 -> 30.2 tok/s).
+KL to the fp32 reference ~1e-4 for both at every length. `auto` now selects it.
+
+**Phase 8, batch sweep, 3 paired rounds:** 1.02x at batch 1, 1.13x at 8, 1.33x at 16,
+1.65x at 32 (672 -> 1120 tok/s aggregate). Batch 64 flagged as paging and excluded.
+
+**Roofline:** the old path runs at 0.68-0.80 of its modelled ceiling at every context
+and batch size; nf4 at 0.27-0.34; int8 at 0.14-0.16. Prefill MFU 42% at 128 tokens,
+85% at 2048, 77% at 16k.
+
+**Phase 6, 7B:** refusal 95% intact; 0-2.5% with the direction from any of layers 14-19
+ablated; 95% under all three random directions. Layer 16 ablation: 2.5% refusal, 0.995x
+perplexity. Layers 21-24: 30-65% refusal, 1.26-1.36x perplexity. Addition at layer 20:
+3% -> 31% (1x) -> 95% (1.5x) -> 100% (2x) on harmless prompts; random vectors 0-2.5%.
+The pre-registered selection rule chose layer 27, whose addition is degenerate; reported
+as it ran (README section 6).
+
+**Phase 5 and 6, 1.5B:** refusal 100% harmful, 40% JBB benign, 2% bundled benign.
+Held-out d peaks at 2.0 (layer 18). Addition at layer 18: 16% -> 76% (1x) -> 100% (2x);
+random vectors 12-14%. Ablation: random directions 98-100%; layer 16 19% at +1.6%
+perplexity (the rule's choice); layers 14/15/19 reach 0-1% at +27-43% perplexity, and
+layer 14's completions score judge NLL 2.5-2.7 - degraded output. Sufficiency replicates; clean necessity does not.
+
+### Commands run
+
+```powershell
+.\venv\Scripts\python.exe -m pytest tests -q
+.\venv\Scripts\python.exe -m ruff check .
+.\venv\Scripts\python.exe -m src.benchmarks.ceilings
+.\venv\Scripts\python.exe -m src.benchmarks.interleaved --config configs/decode_ab.yaml
+.\venv\Scripts\python.exe -m src.benchmarks.interleaved --config configs/batch_sweep.yaml
+.\venv\Scripts\python.exe -m src.interpretability.run --config configs/refusal.yaml
+.\venv\Scripts\python.exe -m src.interpretability.intervene --config configs/intervention.yaml
+.\venv\Scripts\python.exe -m src.evaluation.run --config configs/precision_sweep.yaml
+.\venv\Scripts\python.exe -m src.interpretability.run --config configs/refusal_1.5b.yaml
+.\venv\Scripts\python.exe -m src.interpretability.intervene --config configs/intervention_1.5b.yaml
+.\venv\Scripts\python.exe -m src.analysis.roofline
+.\venv\Scripts\python.exe -m src.visualization.render
+```
+
+CI replay (WSL, fresh clone, CPU torch 2.6.0): ruff clean, 167 passed, 2 GPU tests
+deselected. The workflow itself has not run on GitHub; there is no remote.
+
+### Next steps
+
+1. **A full Arditi-style selection rule** - require the candidate to induce refusal and
+   exclude the last fifth of the network - evaluated on a fresh held-out prompt set, since
+   the bundled set has now been seen for every layer.
+2. **CUDA graphs or a static cache** for batch-1 decode: the roofline puts every
+   configuration at ~75% of its bandwidth ceiling, and the remainder is launch overhead.
+3. **Remove the DynamicCache `torch.cat`** with a preallocated cache - the grouped
+   traffic model charges it two extra passes over the cache per step.
+4. **A second architecture family**, if a licence can be accepted interactively.
+5. **Push and let CI run** - pending the owner's decision to publish.

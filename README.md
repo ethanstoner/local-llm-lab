@@ -1,438 +1,576 @@
 # Local LLM Lab
 
-A reproducible framework for measuring what an open-weight language model actually does
-on one consumer GPU - how fast it runs, what quantization costs, and what its internal
-activations look like while it decides whether to refuse.
+A measurement framework for open-weight language models on one consumer GPU: where the
+time goes, what quantization costs, how close inference runs to what the hardware
+allows, and whether a model's refusal behaviour runs through a single direction in its
+residual stream.
 
-It is not a chat interface and not a wrapper around a serving runtime. The output of
-this repository is data: structured result files, telemetry time series, and figures
-generated from them. Every number in `results/` and `figures/` was produced by a
-measured run on the hardware described below.
+It is not a chat interface or a wrapper around a serving runtime. Its output is data:
+structured result files, GPU telemetry and figures, every number measured on the
+hardware below. Nothing is estimated, and configurations that could not run are
+reported as such.
 
----
-
-## 1. Research motivation
-
-Three questions, each with a phase of the project behind it.
-
-**Where does the time actually go?** A single "tokens per second" figure averages two
-completely different regimes. Prefill processes the whole prompt in parallel and is
-compute-bound; decoding emits one token at a time and is bound by memory bandwidth,
-because every generated token requires a pass over every weight in the network. The
-first question is what the split looks like across prompt lengths on a real card, when
-the measurement is done carefully enough to be believed.
-
-**What does quantization actually buy, and what does it cost?** Storing weights at four
-or eight bits rather than sixteen cuts the volume of traffic per token, which in a
-bandwidth-bound regime should mean higher throughput. In practice quantized weights must
-be dequantized before they can be multiplied, and that costs time. A 4-bit configuration
-that uses a third of the memory and runs *slower* than the bf16 baseline is a perfectly
-ordinary outcome. The second question is what the trade actually looks like here, in
-both memory and output fidelity.
-
-**Is refusal linearly represented in the residual stream?** Arditi et al. (2024) report
-that refusal behaviour in chat models is mediated by a single direction in activation
-space. The third question is whether that signal is detectable, with what strength, and
-at which depth, using only observation - no weight modification and no steering.
+**Subject:** `Qwen/Qwen2.5-7B-Instruct` in bf16 on an RTX 4090 (24 GB), with the interpretability
+phases replicated at 1.5B. **Stack:** PyTorch 2.6, transformers 4.57, bitsandbytes.
+**Tests:** 169, CPU-only, network-free.
 
 ---
 
-## 2. Hardware and software
+## Headline results
+
+**1. A decode-attention path 1.57x faster at 16k context.** On Windows, where PyTorch has
+no flash-attention kernel, grouped-query attention falls back to copying the whole KV
+cache seven times per layer per token. A decode path that reads each key and value once
+is **1.57x faster at 16k context and 1.65x at batch 32**, never meaningfully slower, and
+as close to a float32-attention reference as the kernel it replaces. It is measured with
+a paired, order-balanced A/B, because two separate sweeps on this desktop disagreed with
+each other by more than the effect. [§4](#4-a-faster-decode-path-phases-7-and-8)
+
+![decode A/B](figures/decode_backend_ab.png)
+
+**2. A roofline with no free parameters explains the long-context slowdown.** From the
+model config and measured hardware ceilings (947 GB/s, 157.5 TFLOP/s), the byte count
+per decode step predicts every measured cell to within a constant factor: the old path
+runs at 68-80% of its modelled ceiling at *every* context length and batch size. The
+56% throughput loss from 128 to 16k tokens is the KV-cache expansion, not the KV cache.
+[§3](#3-a-roofline-with-no-free-parameters)
+
+**3. The refusal direction is causal, and the best layer to observe it is not the best
+layer to intervene on.** Projecting one direction out of the residual stream takes
+refusal on held-out harmful prompts from **95% to 0%**; three random directions leave it
+at 95%. Adding it makes the model refuse **100%** of harmless requests (it declines to
+explain fire extinguishers). The layers where the direction *separates* prompts best
+(21-24) are poor places to remove it - 30-65% refusal remains and perplexity rises
+25-36% - while layer 16's direction removes 97.5% of refusals with **no measurable
+perplexity cost**. At 1.5B the direction still *induces* refusal, but no layer removes
+it cleanly. [§6](#6-the-refusal-direction-is-causal-phase-6), [§7](#7-does-it-hold-at-15b)
+
+![causal test](figures/intervention_layer_sweep.png)
+
+**4. This repository's own bugs, found by its own checks.** Four defects that would have
+quietly corrupted results, each caught by a measurement rather than by reading code - a
+padding mask that transformers never passed to custom attention backends, a bf16
+rounding error worth up to 8 nats of KL, a package the `.gitignore` had silently
+excluded from every commit, and two regression tests that passed on the bug they were
+written for. [§8](#8-bugs-this-project-found-in-itself)
+
+---
+
+## Contents
+
+1. [Hardware and software](#1-hardware-and-software)
+2. [Where the time goes, and what quantization costs (Phases 1-2)](#2-where-the-time-goes-and-what-quantization-costs-phases-1-2)
+3. [A roofline with no free parameters](#3-a-roofline-with-no-free-parameters)
+4. [A faster decode path (Phases 7 and 8)](#4-a-faster-decode-path-phases-7-and-8)
+5. [Is refusal linearly represented? (Phase 5)](#5-is-refusal-linearly-represented-phase-5)
+6. [The refusal direction is causal (Phase 6)](#6-the-refusal-direction-is-causal-phase-6)
+7. [Does it hold at 1.5B?](#7-does-it-hold-at-15b)
+8. [Bugs this project found in itself](#8-bugs-this-project-found-in-itself)
+9. [Architecture](#9-architecture)
+10. [Reproducing](#10-reproducing)
+11. [Limitations](#11-limitations)
+12. [Scope and intent](#12-scope-and-intent)
+
+The measurement decisions behind every number are in
+[`docs/methodology.md`](docs/methodology.md); the running log of what was done, what
+broke and why is [`PROGRESS.md`](PROGRESS.md).
+
+---
+
+## 1. Hardware and software
 
 | | |
 |---|---|
 | GPU | NVIDIA GeForce RTX 4090, 24564 MiB, compute capability 8.9 |
+| Measured ceilings | 947 GB/s streaming read · 884-891 GB/s at the MLP GEMV shapes · 157.5 TFLOP/s bf16 GEMM |
 | Driver | 610.88 (CUDA UMD 13.3) |
-| CPU / OS | Windows 11 Pro 26200 |
-| Python | 3.12.10 |
-| torch | 2.6.0+cu124 |
-| transformers | 4.57.0 |
-| bitsandbytes | 0.49.0 |
+| OS / Python | Windows 11 Pro 26200 · Python 3.12.10 |
+| Stack | torch 2.6.0+cu124 · transformers 4.57.0 · bitsandbytes 0.49.0 |
 
-The desktop holds roughly 1.5-2.2 GiB of VRAM before anything is loaded, which is
-recorded per run as `gpu.used_by_other_processes_mib`. Headroom figures in this
-repository account for it.
+This is a working desktop, not a benchmarking rig: other applications hold 1.5-2.2 GiB
+of VRAM and take GPU and CPU time. Baseline occupancy is recorded per run, and every
+comparison between two implementations is paired (§4) so that background load cannot
+masquerade as an effect.
 
-**Subject model:** `Qwen/Qwen2.5-7B-Instruct` (7.62B parameters, 28 layers, hidden size
-3584, GQA with 4 KV heads, 32768-token context). Chosen because it is ungated on the
-Hub - Llama-3.1-8B-Instruct, Gemma-2-9b-it and Ministral-8B all require an interactive
-licence acceptance, which makes them unusable for an unattended run - and because it has
-genuine refusal behaviour, which Phase 5 needs. `Qwen/Qwen2.5-1.5B-Instruct` is used for
-smoke tests.
+`Qwen2.5-7B-Instruct` (7.62B parameters, 28 layers, GQA with 28 query and 4 KV heads) was
+chosen because it is ungated - Llama-3.1-8B, Gemma-2-9b and Ministral-8B all require an
+interactive licence acceptance - and because it refuses, which the interpretability
+phases need. `Qwen2.5-1.5B-Instruct` is the smoke-test model and the cross-scale
+replication.
 
 ---
 
-## 3. Architecture
+## 2. Where the time goes, and what quantization costs (Phases 1-2)
+
+bf16, batch 1, 128 generated tokens, median of three repeats after a discarded warm-up.
+These runs used the `sdpa_no_gqa` backend that preceded §4's decode path.
+
+| prompt tokens | decode tok/s | TTFT | prefill tok/s | peak VRAM |
+|---|---|---|---|---|
+| 128 | 44.8 | 27 ms | 4999 | 16227 MiB |
+| 512 | 43.6 | 57 ms | 8728 | 16311 MiB |
+| 2048 | 39.6 | 209 ms | 9903 | 16691 MiB |
+| 8192 | 27.4 | 974 ms | 8447 | 17915 MiB |
+| 16384 | 19.6 | 2211 ms | 7427 | 20283 MiB |
+
+**Prefill and decode move in opposite directions.** Prefill throughput *rises* to 2048
+tokens as the GPU fills, then falls as attention's quadratic term grows; decode falls
+throughout. A single "tokens per second" figure averages the two. Time to first token
+and a separately timed prefill pass agree to within 1% (209 ms against 2048/9903 =
+207 ms), which is the evidence that the timing harness measures what it claims.
+
+| precision | decode tok/s | weights | vs bf16 | notes |
+|---|---|---|---|---|
+| bf16 | 44.0 | 14526 MiB | - | reference |
+| fp16 | 44.2 | 14526 MiB | - | |
+| nf4 | 40.0 | 5191 MiB | -64% memory, -9% speed | 27-34% of its bandwidth roofline (§3) |
+| int8 | 13.1 | 8303 MiB | -43% memory, -70% speed | LLM.int8()'s decomposition costs more than it saves |
+| fp32 | 2.2 | 29051 MiB | does not fit | the driver *paged* instead of raising OOM |
+
+**On Windows, running out of VRAM does not fail - it slows down sixty-fold.** fp32
+needs 29 GB on a 24 GB card. It loaded and ran at 2.2 tok/s, and at a 2048-token prompt
+0.67 tok/s with a 36-second time to first token. A harness that trusted the absence of
+an exception would have published that as fp32's speed. Every comparison here now flags
+cells that reach 97% of device memory rather than reporting them.
+
+**Fidelity** against bf16 - 1088 teacher-forced positions, 32 prompts, 64-token greedy
+continuations:
+
+| precision | teacher-forced top-1 | perplexity ratio | mean next-token KL (nats) | next-token top-1 | exact continuation | first divergence (of 64) |
+|---|---|---|---|---|---|---|
+| fp16 | 0.981 | 0.997 | 0.0007 | 0.969 | 0.59 | token 51 |
+| int8 | 0.958 | 1.003 | 0.0066 | 0.969 | 0.19 | token 35 |
+| nf4 | 0.889 | 1.047 | **0.120** | 0.875 | 0.00 | token 16 |
+
+Reference perplexity 12.54. Correcting the padding mask (section 8) doubled nf4's
+measured KL, from 0.058 to 0.120, and left the other rows within noise: the
+contaminated comparison had understated how far nf4 departs from bf16.
+
+**nf4 is the least faithful, and exact-match rate is a poor metric.** fp16 and bf16 are
+numerically near-identical - 0.0007 nats of KL and 97% next-token
+agreement - yet only 59% of their greedy continuations match exactly. Greedy
+decoding is chaotic: once two models pick different tokens anywhere, the sequences
+separate for good, so exact match mostly measures how long numerical noise takes to flip
+one argmax. Every fidelity comparison in this repository therefore uses
+teacher-forced distribution divergence instead.
+
+---
+
+## 3. A roofline with no free parameters
+
+[`src/analysis/roofline.py`](src/analysis/roofline.py) computes, from the model config
+and [measured](src/benchmarks/ceilings.py) hardware ceilings, the fastest each
+configuration could possibly run:
+
+* **Decode** reads every weight and the KV cache once per token, so its limit is
+  bytes / bandwidth. Three traffic models: *ideal* (each byte once); *grouped* (plus the
+  read-and-rewrite of the whole cache that transformers' `DynamicCache` does with
+  `torch.cat` every step); *expanded* (plus `repeat_kv` copying the cache per layer by
+  the GQA factor of 7).
+* **Prefill** does 2 FLOPs per matmul parameter per token plus attention's quadratic
+  term, so its limit is FLOPs / measured GEMM throughput.
+
+The parameter count it derives from the config reconciles with the checkpoint's
+recorded 7,615,616,512 to within the biases and norms.
+
+| context | measured (old path) | ideal ceiling | expanded-traffic ceiling | fraction of its ceiling |
+|---|---|---|---|---|
+| 128 | 43.0 | 58.0 | 57.3 | 0.75 |
+| 2048 | 38.3 | 57.6 | 51.1 | 0.75 |
+| 8192 | 26.7 | 56.3 | 38.0 | 0.70 |
+| 16384 | 19.1 | 54.7 | 28.3 | 0.68 |
+
+Decode tok/s, batch 1, Phase 7 medians.
+
+**The byte count explains the long-context slowdown.** At 16k the KV cache is only
+0.9 GB against 15.2 GB of weights, so an ideal decoder would lose ~6%. The measured loss
+is 56%. Under the *expanded* model the ceiling falls just as the measurement does, and
+the measurement holds a steady 68-80% of it at every context and batch size - the
+residual is a constant overhead (kernel launches and small ops at batch 1), not
+anything that grows with context. That is the diagnosis §4 acts on.
+
+**Prefill** reaches 42% of measured GEMM throughput at 128 tokens, 85% at 2048, and
+falls to 77% at 16k as attention's share of the work reaches 20%
+([figure](figures/prefill_roofline.png)). **nf4** decodes at 27-34% of its bandwidth
+roofline and **int8** at 14-16%: for both, dequantisation - not memory - is the bottleneck.
+
+---
+
+## 4. A faster decode path (Phases 7 and 8)
+
+### The fix
+
+[`src/models/attention.py`](src/models/attention.py) adds `sdpa_grouped_decode`. Prefill
+is unchanged. For each decode step, the seven query heads that share a KV head are
+stacked, so every key and value is read once and nothing is expanded. Two ways of doing
+the arithmetic win at different lengths, measured per layer:
+
+| cached tokens | repeat_kv + SDPA (old) | folded SDPA | grouped fp32 matmul |
+|---|---|---|---|
+| 128 | 43 us | **26 us** | 77 us |
+| 1024 | 69 us | **44 us** | 72 us |
+| 2048 | 114 us | 92 us | **91 us** |
+| 16384 | 995 us | 702 us | **153 us** |
+
+Folded SDPA treats the stacked heads as query positions of one non-causal attention call
+- fast, but it launches one block per KV head and four blocks cannot fill 128 SMs over a
+long sequence. The grouped matmul hands the sequence dimension to cuBLAS. The path
+switches at the measured crossover (~1.4k tokens).
+
+The matmul computes attention scores in **float32**, and the first version did not. It
+followed transformers' eager attention and rounded scores to bf16. Qwen2.5's attention
+logits are large enough that bf16 - whose adjacent values are 2.0 apart near 500 -
+cannot place them within a softmax temperature of the right value. Against a
+float32-attention reference that version's KL averaged 0.09-0.14 nats with single steps
+above 8 nats. The regression test uses two keys scoring 500.0 and 500.5, which bf16
+ties; it fails on the old code.
+
+### Measuring it honestly
+
+The first attempt measured each backend as its own sweep. The baseline then came in at
+35.5 tok/s against Phase 1's 44.8 for the identical configuration - with other
+applications busy, the desktop was simply slower that hour.
+[`src/benchmarks/interleaved.py`](src/benchmarks/interleaved.py) instead loads the model
+once, switches backend in place, visits every cell in every round, alternates the order
+(ABBA), and reports the median of per-round paired ratios.
+
+**Single stream, 5 paired rounds:**
+
+| context | old tok/s | new tok/s | paired speed-up [min, max] | KL to fp32 ref, old / new |
+|---|---|---|---|---|
+| 128 | 43.0 | 43.5 | 1.01x [0.99, 1.06] | 6.8e-4 / 6.8e-4 |
+| 1024 | 39.7 | 41.3 | 1.03x [1.01, 1.05] | 6.2e-4 / 6.2e-4 |
+| 2048 | 38.3 | 39.1 | 1.02x [0.96, 1.09] | 1.6e-4 / 1.2e-4 |
+| 4096 | 32.5 | 37.8 | **1.17x** [1.10, 1.25] | 1.1e-4 / 9.3e-5 |
+| 8192 | 26.7 | 37.4 | **1.37x** [1.35, 1.44] | 8.1e-5 / 1.4e-4 |
+| 16384 | 19.2 | 30.2 | **1.57x** [1.56, 1.59] | 1.2e-4 / 7.2e-5 |
+
+KL is the mean next-token KL over 64 teacher-forced decode steps against a backend that
+does decode attention entirely in float32. Both paths sit at 1e-4 to 7e-4 nats, and
+their top-1 agreement with the reference is identical at every length.
+
+**Batched, 512-token prompt, 3 paired rounds** ([figure](figures/batch_throughput.png)):
+
+| batch | old tok/s per sequence | new | speed-up | new aggregate tok/s |
+|---|---|---|---|---|
+| 1 | 42.4 | 43.0 | 1.02x | 43 |
+| 8 | 35.9 | 40.4 | 1.13x | 323 |
+| 16 | 29.0 | 39.0 | 1.33x | 623 |
+| 32 | 21.0 | 35.0 | **1.65x** | **1120** |
+| 64 | *paging* | *paging* | - | - |
+
+The gap grows with batch because `repeat_kv` copies every sequence's cache. Batch 64
+reached 24054 of 24564 MiB; the harness flagged it and it is excluded, though it would
+have shown a 2.1x "speed-up". `attn_implementation: auto` now selects the new path on
+builds without flash attention.
+
+---
+
+## 5. Is refusal linearly represented? (Phase 5)
+
+After Arditi et al. (2024). `JailbreakBench/JBB-Behaviors` - 100 harmful behaviours and
+100 matched benign ones - split 70/30. At every layer, the difference between the class
+means of the last-token residual stream is fitted on the training split; every statistic
+below is from the held-out split.
+
+**The behavioural precondition holds:** the model refuses 37/40 harmful prompts (93%)
+and 2/40 benign ones (5%).
+
+| layer | held-out Cohen's *d* | held-out AUROC | fitting-split *d* |
+|---|---|---|---|
+| 0 | 0.62 | 0.668 | 1.35 |
+| 10 | 1.01 | 0.761 | 1.69 |
+| 14 | 2.02 | 0.913 | 2.29 |
+| 16 | 2.20 | 0.928 | 2.54 |
+| 18 | 3.23 | 0.984 | 3.33 |
+| **20** | **3.83** | **0.990** | 3.35 |
+| 24 | 3.63 | 0.986 | 3.20 |
+| 27 | 3.66 | 0.984 | 3.11 |
+
+Separation is weak through layer 10, rises steeply from 12 to 18, and plateaus at
+*d* ≈ 3.6-3.8 from layer 18 to the output. The fitting split overstates separation
+wherever the signal is weak - at layer 0 it doubles it (1.35 against 0.62) - which is
+what fitting 3584 dimensions to 70 examples per class does. Directions from neighbouring
+layers are related but not identical: cosine similarity to layer 20's is 0.35 at layer 16,
+0.76 at 19, 0.84 at 21 and 0.39 at 27.
+
+*These are the corrected numbers. The first Phase 5 run was made while custom attention
+backends received no padding mask (§8); the conclusions held, and every number
+tightened.*
+
+---
+
+## 6. The refusal direction is causal (Phase 6)
+
+Phase 5 is correlational: a direction can separate two classes without the model reading
+from it. [`src/interpretability/intervene.py`](src/interpretability/intervene.py) tests
+whether the model *uses* it, with inference-time hooks that are removed after every
+condition:
+
+* **Ablation** projects the direction out of every write to the residual stream. The run
+  verifies it worked: the mean |cosine| between the residual stream and the direction,
+  across every layer and position, falls from 0.071 to 0.00014.
+* **Addition** adds a multiple of the class-mean difference at one layer.
+* **Controls:** three random unit directions, three random vectors of equal norm, and
+  directions from layers where Phase 5 found little separation.
+* **Evaluation:** the 30+30 JailbreakBench held-out prompts plus 50+50 bundled prompts
+  written independently and never used for fitting. Every rate carries a 95% Wilson
+  interval. Completions are scored for fluency by the intact model and by an independent
+  judge (Qwen2.5-1.5B), and capability is measured as corpus perplexity and next-token
+  KL with each ablation active.
+
+### Necessity: removing the direction stops refusal
+
+Harmful prompts, 80 per condition:
+
+| direction ablated | refusal | 95% CI | corpus perplexity | benign next-token KL |
+|---|---|---|---|---|
+| none | 95% (76/80) | 88-98% | 12.54 | - |
+| random, three seeds | 95%, 95%, 95% | | -0.1% to +0.3% | 0.005-0.018 |
+| layer 0 | 96% | 90-99% | +0.5% | 0.02 |
+| layer 10 | 96% | 90-99% | +1.3% | 0.10 |
+| layer 14 | **0%** (0/80) | 0-5% | +4.6% | 0.78 |
+| **layer 16** | **2.5%** (2/80) | 1-9% | **-0.5%** | 0.35 |
+| layer 19 | 0% | 0-5% | +6.7% | 0.46 |
+| layer 20 (Phase 5's best) | 10% | 5-19% | +15.5% | 0.71 |
+| layer 24 | 65% | 54-75% | +36% | 1.54 |
+
+With the direction removed the model complies, and coherently: completions keep the
+baseline's distinct-token ratio (0.92 against 0.93), and the independent judge scores
+them at 1.1-1.3 nats per token - above the 0.7-0.9 of the model's ordinary answers, far
+below the 2.2-2.7 of genuinely degenerate output (below). Harmful completions are scored
+and discarded; none is stored.
+
+### Observation is not intervention
+
+![observation vs intervention vs cost](figures/intervention_layer_sweep.png)
+
+The layers where the direction best *separates* harmful from harmless prompts (Phase 5
+peak, 20-24) are not where removing it works best. A band at layers 14-19 removes
+refusal almost completely; at layers 21-24, ablation leaves 30-65% of refusals in place
+while costing 25-36% perplexity. Layer 16 - *d* = 2.2, well short of the peak - removes
+97.5% of refusals with **no measurable perplexity change**. Layer 0 is weakly separable
+(*d* = 0.62) and ablating it does nothing at all. How well a probe reads a feature is
+not how much the model relies on it.
+
+### Sufficiency: adding the direction induces refusal
+
+Harmless prompts, 80 per condition, adding the layer-20 direction:
+
+| added | refusal | example opening (harmless prompts) |
+|---|---|---|
+| nothing | 3% | "Certainly! Compound interest is a powerful financial concept..." |
+| 1.0x | 31% | "I'm here to provide information that is ethical and legal..." |
+| 1.5x | 95% | "I'm sorry, but I must clarify that I cannot promote or encourage the use of fire extinguishers in any way." |
+| 2.0x | 100% | "I'm sorry, but there seems to be a misunderstanding. I cannot be Qwen..." |
+| random vector, same norm as 1.0x | 0-2.5% | ordinary answers |
+
+### A selection rule that failed, reported as it ran
+
+Before the run, a rule was fixed for choosing "the causal layer" without touching the
+bundled test set: among layers whose ablation keeps perplexity within 5%, the lowest
+refusal rate on the JailbreakBench held-out split, ties to lower perplexity. It chose
+**layer 27**, by tie-break over layer 14 (both 0/30). Ablating layer 27's direction does
+remove refusal (5%) at +3% perplexity - but *adding* it produces degenerate output
+("I I I I I...", distinct-token ratio 0.07), which the fluency metrics caught and the
+substring refusal classifier alone would not have. Arditi et al. also require a
+candidate to induce refusal and exclude the last fifth of the network; the simplified
+rule dropped both. Layer 16 removes refusal at no measured cost, but whether *adding*
+its direction induces refusal was not tested, and the bundled test set has now been seen
+for every layer - so it is described here as a finding, not presented as a selection.
+
+---
+
+## 7. Does it hold at 1.5B?
+
+The same two phases on `Qwen2.5-1.5B-Instruct` (28 layers, hidden size 1536), with
+the 7B model as the fluency judge. The configs differ from the 7B ones only in the model.
+
+**The behavioural contrast is weaker.** The 1.5B model refuses 100% of harmful prompts
+but also **40% of the JailbreakBench benign prompts** - which are deliberately
+topic-matched to the harmful ones - against 2% of the bundled benign prompts. It
+over-refuses borderline topics, so a direction fitted on the JBB contrast partly
+measures topic rather than refusal.
+
+**Separation is weaker, at the same relative depth.** Held-out *d* peaks at 2.0 (layer
+18, AUROC 0.91) against 3.8 for the 7B model, but rises over the same stretch of the
+network: from ~1.0 at layer 10 to its plateau by layers 15-18 of 28
+([figure](figures/refusal_cross_scale.png)).
+
+**Sufficiency replicates; clean necessity does not.**
+
+| intervention (80 prompts each) | 7B | 1.5B |
+|---|---|---|
+| harmful refusal, intact | 95% | 100% |
+| harmful refusal, random directions ablated | 95%, 95%, 95% | 100%, 98%, 99% |
+| harmful refusal, best no-cost ablation | 2.5% (layer 16, -0.5% ppl) | 19% (layer 16, +1.6% ppl) |
+| harmful refusal, best ablation at any cost | 0% (layer 14, +4.6% ppl) | 0% (layer 14, **+43% ppl**) |
+| harmless refusal, intact | 3% | 16% |
+| harmless refusal, +1.0x direction | 31% | 76% |
+| harmless refusal, +2.0x direction | 100% | 100% |
+| harmless refusal, random vector of equal norm | 0-2.5% | 12-14% |
+
+Adding the direction induces refusal *more* readily at 1.5B, and random vectors of the
+same norm do nothing, so the direction is causally sufficient at both scales. Removing
+it is another matter. At 7B a band of layers removes refusal at no measurable cost. At
+1.5B, the best layer whose ablation keeps perplexity within 4% still leaves 19% of
+refusals in place, and the layers that reach 0-1% (14, 15, 19) raise perplexity by
+27-43%. For layer 14 the judge scores the resulting completions at 2.5-2.7 nats per
+token, against 0.5-0.9 for intact answers - degraded text, not fluent compliance. Here the automatic selection rule chose layer 16, which is the
+reasonable choice.
+
+A plausible reading, not tested here, is that the smaller model entangles refusal with
+the topic features its over-refusal suggests it leans on, so no single direction removes
+one without the other. What the data do show is that "refusal is mediated by a single
+direction" holds cleanly at 7B and only partly at 1.5B.
+
+---
+
+## 8. Bugs this project found in itself
+
+Each of these would have quietly corrupted results. None was found by reading code.
+
+**Custom attention backends received no padding mask.** Transformers builds attention
+masks from a registry *separate* from the attention functions, and for a name missing
+from it, passes `None`. The `sdpa_no_gqa` backend was registered only as a function, so
+in every left-padded batch real tokens attended to pad tokens. Found while building
+Phase 6, confirmed on a tiny model (a padded prompt's logits moved by up to 0.25; under
+`eager` and `sdpa`, by exactly 0). Batch-1 benchmarks were unaffected; Phase 2's
+prompt-level metrics, Phase 5 and the behaviour check were re-run. The existing unit test
+called the attention function *with* a mask - a path the model never takes - and passed
+throughout.
+
+**bf16 attention scores cost up to 8 nats of KL.** The first grouped decode path looked
+fine on speed and on greedy output. The float32-reference fidelity check - built because
+exact-match comparisons had already proven meaningless in Phase 2 - showed it 100-1000x
+further from the reference than the kernel it replaced (§4).
+
+**A package missing from every commit.** The `.gitignore` entry `models/`, meant for the
+downloaded weights, also matched `src/models/` - the loader, precision registry, OOM
+guard and attention backends. Every commit before the fix failed at import from a fresh
+clone; verified by cloning the parent commit.
+
+**Regression tests that passed on the bug.** The first test for the bf16-score fix
+passed with the bug re-injected, and so did the second: in one the inputs were float32,
+in the other bf16 had rounded both keys to the same value, so 50/50 was the right
+answer. The third was built so that the inputs are exactly representable in bf16 and
+the scores are not. Both numerical regression tests - bf16 scores and the missing
+padding mask - were then checked by re-introducing each bug and watching them fail.
+
+Also found along the way: a sequential A/B confounded by desktop load (§4); PyTorch's
+profiler silently falling back to its legacy mode on Windows and double-counting device
+time; and a profiling run that paged because a 16k-token prefill materialised 5 GB of
+logits. Details in [`PROGRESS.md`](PROGRESS.md).
+
+---
+
+## 9. Architecture
 
 ```
 src/
-├── utils/            config parsing, seeding, run metadata, result IO, prompt datasets
+├── utils/            config (strict YAML -> frozen dataclasses), seeding, run metadata, IO, prompt sets
 ├── monitoring/       NVML sampler thread, PyTorch allocator accounting
-├── models/           precision-aware loader, capability registry, OOM handling
-├── benchmarks/       timing primitives, sweep driver, metrics records, CLI
-├── evaluation/       quantization fidelity metrics, CLI
-├── interpretability/ activation hooks, statistics, refusal-direction analysis, CLI
-└── visualization/    figure functions, render CLI
-configs/              one YAML per experiment
-scripts/              environment setup, model and dataset fetchers, run-all
+├── models/           precision-aware loader, capability registry, OOM guard, attention backends
+├── benchmarks/       timing primitives, sweeps, interleaved paired A/B, hardware ceilings
+├── evaluation/       quantization fidelity metrics
+├── interpretability/ activation hooks, statistics, refusal direction, interventions, causal runner
+├── analysis/         roofline model over finished result files
+└── visualization/    figure functions and the render CLI
+configs/              one YAML per experiment; unknown keys fail at parse time
 results/              one self-contained directory per run
-figures/              rendered PNGs
-tests/                119 tests, CPU-only and network-free
-docs/methodology.md   the measurement decisions, in detail
+figures/              rendered PNGs, each captioned with the run it came from
+tests/                169 tests, CPU-only and network-free
 ```
 
-Four ideas hold it together:
-
-**A run is a directory.** Every experiment writes `meta.json` (hardware, driver, CUDA,
-package versions, git commit and dirty flag, full config, determinism settings),
-`metrics.json` (every cell, failures included), a flat `.csv` for plotting, a
-`telemetry/` time series, and `run.log`. A result is never separated from the conditions
-that produced it.
-
-**Unsupported is a result.** `src/models/registry.py` probes each precision before it is
-attempted. A configuration that cannot run on this machine is recorded with
-`status: "unsupported"` and the reason. Nothing is silently dropped and nothing is
-estimated.
-
-**OOM is a result too.** `src/models/oom.py` catches allocation failures, attaches the
-allocator state, and lets the sweep continue. Non-OOM exceptions still propagate: a real
-bug must not be filed as an experimental outcome.
-
-**Two views of memory, always both.** The PyTorch allocator knows what it handed out;
-the driver knows what the device holds, including the CUDA context, cuBLAS workspaces
-and other processes. Quoting only the first understates the requirement and only the
-second overstates the model's own footprint, so every run reports both.
+**A run is a directory.** Every experiment writes `meta.json` (hardware, driver, package
+versions, git commit and dirty flag, full config, determinism settings), its measurements
+including failures, and a log. **Unsupported, OOM and paging are results**, recorded with
+their reason rather than dropped. **Two views of memory**, allocator and driver, are
+always reported together.
 
 ---
 
-## 4. Methodology
-
-The full version is in [`docs/methodology.md`](docs/methodology.md). The decisions that
-most affect whether the numbers mean anything:
-
-* **Every timed region ends with `torch.cuda.synchronize()`.** CUDA work is
-  asynchronous; a timer stopped after the launch measures enqueue time, not execution.
-* **Prefill and decode are measured separately.** Prompt processing is timed with its
-  own dedicated forward pass. Decode throughput is `(new_tokens - 1) / (t_last - t_first)`
-  and excludes prefill entirely. End-to-end throughput is reported alongside it.
-* **Generation is forced to a fixed token budget** (`min_new_tokens == max_new_tokens`).
-  A run that stops early at an end-of-sequence marker produces fewer tokens in less
-  time, and the ratio flatters whichever configuration happened to stop soonest.
-* **Time to first token is measured two ways** - from a per-token timestamp inside
-  `generate`, and from the separate prefill pass - and both are reported, so the two can
-  be checked against each other.
-* **Per-token synchronization overhead is measured, not assumed.** Stamping a
-  synchronized clock once per token is what makes an inter-token latency distribution
-  real, but it gives up some CPU/GPU overlap. The harness runs the same configuration
-  with and without it as a control and records the difference.
-* **One warm-up iteration is discarded** per configuration, then N repeats, reported as
-  median and standard deviation.
-* **Prompt lengths are exact.** Benchmark prompts are built by tokenising a bundled
-  corpus and slicing to a precise token count, with no chat template - a template adds a
-  model-dependent number of tokens, which would make "2048 context" mean something
-  different for each checkpoint.
-* **Determinism is a recorded setting, not an assumption.** Benchmark configs turn
-  deterministic algorithms off, because requesting them disables cuDNN autotuning and
-  can select slower kernels - that would measure the determinism flag rather than the
-  model. Greedy decoding already makes the generated text reproducible. The
-  interpretability config turns them on. Either way the run records what took effect.
-
-### Quality metrics (Phase 2)
-
-No LLM judge: that would mean a second, unvalidated model in the loop. Instead, three
-deterministic comparisons against the bf16 reference, with the two models never resident
-on the card at once:
-
-1. **Greedy continuation agreement** - exact-match rate, token-level agreement, and the
-   mean index at which the two models first diverge.
-2. **Next-token distribution divergence** - exact KL(reference ‖ candidate) and
-   Jensen-Shannon over a fixed prompt set.
-3. **Teacher-forced agreement and perplexity** over a fixed corpus with a strided
-   window, giving ~1088 scored positions rather than the 32 the prompt comparisons use.
-   Each run records the actual count.
-
-### Refusal direction (Phase 5)
-
-Per layer: capture the last-token residual stream for a harmful and a harmless prompt
-set, take the difference of the class means, normalise it, and project held-out prompts
-onto it.
-
-* The direction is fitted on a **training split** and every reported statistic comes from
-  a **held-out split**. Fitting and evaluating on the same prompts would make the result
-  close to a tautology.
-* Separation is reported as Cohen's *d* and AUROC, both standardised, so layers are
-  comparable despite residual-stream norm growing with depth. Raw projections and
-  norm-divided (cosine) projections are both recorded.
-* A **behavioural check runs first**: the model's actual refusal rate on both sets. A
-  direction separating two prompt sets only says something about refusal if the model's
-  refusal behaviour on those sets actually differs.
-
-Prompt sets come from `JailbreakBench/JBB-Behaviors`, which ships 100 harmful behaviours
-and 100 matched benign ones. A small bundled fallback in `data/` keeps the pipeline
-runnable offline. Harmful-prompt completions are classified as refusal or not and then
-discarded; only the rate is retained.
-
----
-
-## 5. Reproducing
+## 10. Reproducing
 
 ```powershell
-# 1. Environment (creates venv/, downloads torch, writes requirements.lock.txt)
+# Environment: venv, torch 2.6.0+cu124, pinned stack
 powershell -ExecutionPolicy Bypass -File .\scripts\setup_env.ps1
 
-# 2. Tests - CPU only, no network, no model download
+# Tests (CPU only, no network) and lint
 .\venv\Scripts\python.exe -m pytest tests/ -q
+.\venv\Scripts\python.exe -m ruff check .
 
-# 3. Weights and prompt sets. The configs point at local directories through
-#    model.local_path, so this must run before any experiment.
-#    ~17 GB of weights, ~44 KB of prompts.
+# Weights (~17 GB) and prompt sets. Configs point at local directories.
 powershell -ExecutionPolicy Bypass -File .\scripts\fetch_model.ps1 -Repo Qwen/Qwen2.5-7B-Instruct
 powershell -ExecutionPolicy Bypass -File .\scripts\fetch_model.ps1 -Repo Qwen/Qwen2.5-1.5B-Instruct
 powershell -ExecutionPolicy Bypass -File .\scripts\fetch_datasets.ps1
 
-# 4. Smoke test on the 1.5B model (under a minute)
-.\venv\Scripts\python.exe -m src.benchmarks.run --config configs/smoke.yaml
-
-# 5. Phase 1 - context-length sweep on the 7B model
-.\venv\Scripts\python.exe -m src.benchmarks.run --config configs/qwen2.5-7b.yaml
-
-# 6. Phase 2 - precision sweep, then quality comparison
-.\venv\Scripts\python.exe -m src.benchmarks.run --config configs/precision_sweep.yaml
-.\venv\Scripts\python.exe -m src.evaluation.run  --config configs/precision_sweep.yaml
-
-# 7. Phases 4 and 5 - activation capture and refusal-direction analysis
-.\venv\Scripts\python.exe -m src.interpretability.run --config configs/refusal.yaml
-
-# 8. Figures, from whatever runs exist
-.\venv\Scripts\python.exe -m src.visualization.render
+# Everything, in order, then the figures
+powershell -ExecutionPolicy Bypass -File .\scripts\run_all.ps1
 ```
 
-`scripts/run_all.ps1` runs steps 4-8 in order, once steps 1-3 have been done.
+Or one phase at a time:
 
-The weights are fetched by a PowerShell script rather than by `huggingface_hub` because
-on this machine Python's HTTP stack stalls indefinitely on large streaming downloads:
-`pip` hung for 25 minutes on the torch wheel with zero bytes transferred, and
-`snapshot_download` hung at 608 MB of 3.1 GB, with and without `hf_xet`. A .NET
-`HttpWebRequest` sustains 8-13 MB/s against the same URLs, so the transfer is done there
-with explicit ranged resume. `model.id` is still what run metadata records, and each
-model directory carries a `_fetch_metadata.json` with the resolved commit.
+| phase | command |
+|---|---|
+| 1 context sweep | `python -m src.benchmarks.run --config configs/qwen2.5-7b.yaml` |
+| 2 precision + fidelity | `python -m src.benchmarks.run --config configs/precision_sweep.yaml` then `python -m src.evaluation.run --config configs/precision_sweep.yaml` |
+| 5 refusal direction | `python -m src.interpretability.run --config configs/refusal.yaml` |
+| 6 causal test | `python -m src.interpretability.intervene --config configs/intervention.yaml` (needs a Phase 5 run) |
+| ceilings | `python -m src.benchmarks.ceilings` |
+| 7 decode A/B | `python -m src.benchmarks.interleaved --config configs/decode_ab.yaml` |
+| 8 batch sweep | `python -m src.benchmarks.interleaved --config configs/batch_sweep.yaml` |
+| roofline | `python -m src.analysis.roofline` |
+| figures | `python -m src.visualization.render` |
 
-Experiments are described entirely by their config file. To change the grid, edit the
-YAML; unknown keys and impossible values are rejected at parse time rather than forty
-minutes into a sweep.
+Weights are fetched by a PowerShell script because on this machine Python's HTTP stack
+stalls indefinitely on large downloads (`pip` hung for 25 minutes on the torch wheel;
+`snapshot_download` at 608 MB of 3.1 GB), while .NET sustains 8-13 MB/s against the same
+URLs.
 
----
-
-## 6. Results
-
-All figures below come from `results/`. Every number was measured; none is estimated,
-and configurations that could not run are reported as such rather than omitted.
-
-### 6.1 Where the time goes (Phase 1)
-
-`Qwen/Qwen2.5-7B-Instruct`, bf16, batch size 1, 128 generated tokens, median of three
-repeats after one discarded warm-up.
-
-| prompt tokens | decode tok/s | end-to-end tok/s | TTFT | prefill tok/s | peak VRAM |
-|---|---|---|---|---|---|
-| 128 | 44.8 | 44.8 | 27 ms | 4999 | 16227 MiB |
-| 512 | 43.6 | 43.1 | 57 ms | 8728 | 16311 MiB |
-| 2048 | 39.6 | 37.5 | 209 ms | 9903 | 16691 MiB |
-| 8192 | 27.4 | 22.8 | 974 ms | 8447 | 17915 MiB |
-| 16384 | 19.6 | 14.7 | 2211 ms | 7427 | 20283 MiB |
-
-Three things worth drawing out.
-
-**Decode throughput falls 56% from 128 to 16384 tokens** (and end-to-end falls 67%) while the weights never change.
-Nothing about the matrix multiplications got harder; the KV cache got bigger, and every
-decode step must now read it. This is the clearest demonstration in the project that
-single-stream decoding is bound by memory traffic rather than arithmetic.
-
-**Prefill and decode move in opposite directions over most of the range.** Prefill
-throughput *rises* from 4999 to 9903 tok/s between 128 and 2048 tokens, because short
-prompts cannot fill the GPU, and then falls back to 7427 at 16384 as attention's
-quadratic term begins to tell. Decode falls monotonically throughout. A single
-"tokens per second" number would have averaged a rising curve with a falling one.
-
-**Time to first token and the independent prefill pass agree.** At 2048 tokens: TTFT
-209 ms against 2048/9903 = 207 ms. At 16384: 2211 ms against 16384/7427 = 2206 ms. Two
-separate measurements of nearly the same quantity, taken by different mechanisms and
-landing within 1%, which is the evidence that the timing harness does what it claims.
-
-The per-token synchronization control measured **0.62% overhead** (2.854 s with,
-2.837 s without). The inter-token latency distribution is therefore close to free.
-
-### 6.2 What quantization costs (Phase 2)
-
-Same model, 512-token prompt, 128 generated tokens.
-
-| precision | decode tok/s | vs bf16 | weights | vs bf16 | peak VRAM |
-|---|---|---|---|---|---|
-| fp16 | 44.2 | +0.4% | 14526 MiB | - | 16349 MiB |
-| bf16 | 44.0 | reference | 14526 MiB | reference | 16311 MiB |
-| nf4 | 40.0 | **-9%** | 5191 MiB | **-64%** | 8509 MiB |
-| int8 | 13.1 | **-70%** | 8303 MiB | -43% | 10531 MiB |
-| fp32 | 2.2 | -95% | 29051 MiB | +100% | 24383 MiB |
-
-**nf4 is the clear winner and int8 is a trap.** nf4 gives back 64% of the memory for a
-9% throughput cost, and at a 2048-token prompt it matches bf16 outright (40.3 vs
-40.2 tok/s) - by then the smaller weight reads are paying for the dequantization.
-int8 saves *less* memory than nf4 and runs 3.4x slower: LLM.int8()'s mixed-precision
-decomposition splits each matmul into two passes and cannot be folded into one kernel.
-Someone reaching for "8-bit" as the moderate, safe option would get the worst row here.
-
-**fp32 is the interesting failure.** 7.62B parameters at four bytes is 29051 MiB on a
-24564 MiB card, so it should not fit - and it did not raise OOM. The Windows display
-driver pages VRAM to host memory instead, so the model loaded and ran, at 2.2 tok/s with
-a 4.7 s time to first token. At a 2048-token prompt it fell to 0.67 tok/s with a 36 s
-TTFT, and the third repeat degraded further to 98 s as paging pressure compounded.
-
-That is the single most useful operational finding here: **on this platform, exceeding
-VRAM does not fail, it degrades by a factor of sixty.** A harness that trusted the
-absence of an exception would have published those numbers as the model's performance.
-
-### 6.3 Long-context attention on a build without flash
-
-Diagnosing why the first Phase 1 sweep appeared to hang produced a result worth its own
-section. Prefill only, bf16:
-
-| prompt tokens | stock `sdpa` | `sdpa_no_gqa` |
-|---|---|---|
-| 2048 | 0.565 s / 1322 MiB | 0.609 s / 400 MiB |
-| 8192 | 140.667 s / 17549 MiB | 0.968 s / 1572 MiB |
-| 16384 | did not fit | 2.206 s / 3136 MiB |
-
-Transformers passes `enable_gqa=True` to PyTorch's attention whenever there is no
-attention mask, to keep it off the quadratic math kernel. PyTorch's Windows wheels are
-not built with flash attention, and the memory-efficient kernel does not implement
-`enable_gqa` - so both fast kernels are unavailable and the flag produces exactly the
-fallback it was meant to prevent. Expanding the KV heads manually and omitting the flag
-restores linear memory. Full diagnosis in `src/models/attention.py` and `PROGRESS.md`.
-
-### 6.4 What quantization costs in fidelity
-
-Against the bf16 reference: 1088 teacher-forced positions, 32 fixed prompts, 64-token
-greedy continuations.
-
-| precision | teacher-forced top-1 | perplexity ratio | mean KL (nats) | next-token top-1 | exact continuation |
-|---|---|---|---|---|---|
-| fp16 | 0.981 | 0.997 | 0.0006 | 1.000 | 0.50 |
-| int8 | 0.958 | 1.003 | 0.0077 | 0.969 | 0.09 |
-| nf4 | 0.889 | 1.047 | 0.0584 | 0.938 | 0.00 |
-
-Reference perplexity 12.54.
-
-**This is the column that changes the Phase 2 verdict.** On throughput and memory alone
-nf4 looked like a straightforward win. It is also the least faithful of the three: 4.7%
-higher perplexity, 89% teacher-forced top-1 agreement, and not one of 32 greedy
-continuations matching the reference exactly. That is a real behavioural difference, not
-a rounding artifact. nf4 remains the right default on a memory-constrained card, but
-"9% slower for 64% less memory" is only half the sentence.
-
-**The most useful methodological finding here is about the metric, not the models.**
-fp16 and bf16 are numerically near-identical - mean KL of 0.0006 nats and *100%* next-token
-top-1 agreement - yet only **half** their greedy continuations match exactly, with the
-median divergence at token 49 of 64. Greedy decoding is chaotic: once two models pick
-different tokens anywhere, the sequences separate permanently, so exact-match rate mostly
-measures how long it takes numerical noise to flip one argmax. It is reported here
-because it is what a user would notice, but distribution divergence is the metric that
-actually tracks quality. A quantization comparison resting on continuation match alone
-would conclude that fp16 "fails" half the time.
-
-### 6.5 Is refusal linearly represented? (Phase 5)
-
-`JailbreakBench/JBB-Behaviors`, 100 harmful and 100 matched benign instructions, split
-70/30. The direction is fitted on the training split; everything below is the held-out
-split.
-
-**The behavioural precondition holds.** The model refused **36/40 (90%)** of harmful
-prompts and **5/40 (12.5%)** of benign ones. Without that gap, a separating direction
-would be measuring topic rather than refusal.
-
-| layer | held-out Cohen's *d* | held-out AUROC | fitting-split *d* |
-|---|---|---|---|
-| 0 | 0.13 | 0.541 | 0.84 |
-| 5 | 0.06 | 0.524 | 0.76 |
-| 10 | 0.35 | 0.596 | 1.17 |
-| 15 | 1.78 | 0.894 | 2.07 |
-| 18 | 3.00 | 0.976 | 3.01 |
-| **20** | **3.59** | **0.982** | 3.12 |
-| 24 | 3.41 | 0.979 | 3.06 |
-| 27 | 3.41 | 0.978 | 3.01 |
-
-**A direction is clearly present, and it emerges at a specific depth.** Separation is at
-chance through layers 0-10, rises sharply between layers 12 and 19, and plateaus from
-layer 18 onward, peaking at layer 20 of 28 - about 71% of the way through the network.
-That is consistent with Arditi et al., who report the refusal direction in the middle-to-late
-layers rather than at the output.
-
-**The train/test split earned its place.** At layer 0 the fitting split shows *d* = 0.84
-while the held-out split shows *d* = 0.13. In a 3584-dimensional space, 70 examples per
-class are enough to find a direction that separates the training data by half a standard
-deviation of pure noise. Fitting and evaluating on the same prompts would have reported a
-refusal signal in the embedding layer.
-
-**"A single direction" needs qualifying.** Cosine similarity between each layer's fitted
-direction and layer 20's falls off either side of the peak: 0.60 at layer 18, 0.78 at 19,
-0.85 at 21, 0.75 at 22, and 0.39 by layer 27. Near-zero below layer 10. So the directions
-found in the high-signal band are *related* but not identical, and this observational
-setup cannot distinguish "one feature read imperfectly at several depths" from "several
-correlated features". Settling that needs intervention, which is out of scope here.
-
-Residual-stream norm grows from ~10 at layer 0 to ~400 at layer 27 and is
-indistinguishable between the two prompt classes, which is why layers are compared with
-standardised statistics rather than raw projection magnitudes.
+The CI workflow in `.github/workflows/tests.yml` runs ruff and the CPU suite against CPU
+torch. Its steps were replayed on a fresh clone under Linux (WSL): ruff clean, 167
+passed, 2 GPU-only tests deselected. It has not yet run on GitHub.
 
 ---
 
-## 7. Limitations
+## 11. Limitations
 
-* **One GPU, one model, one machine.** Nothing here establishes that these numbers
-  generalise to other cards, other architectures or other driver versions.
-* **Batch size 1.** Every measurement is single-stream. Server-style throughput with
-  continuous batching is a different regime and is not measured.
-* **The desktop is not idle.** A browser and other applications hold VRAM and
-  occasionally take GPU time. The baseline occupancy is recorded per run and repeats are
-  reported with spread, but this is not a quiet benchmarking rig.
-* **`transformers.generate`, not an optimised serving stack.** The figures reflect what
-  the reference implementation does. vLLM or TensorRT-LLM would produce different, and
-  generally better, numbers.
-* **The refusal classifier is substring matching.** It is the same crude approach the
-  original paper uses for its refusal score. It will miss an unusually phrased refusal,
-  so reported refusal rates are a lower bound.
-* **The OOM path is untested on this hardware.** `src/models/oom.py` is covered by unit
-  tests, but no experiment here ever triggered it: fp32 needed 29051 MiB on a 24564 MiB
-  card and the Windows driver paged rather than failing. On a platform that raises
-  `CUDA out of memory` properly, that code path is unexercised by these runs.
-* **The perplexity corpus is 1089 tokens.** That is ~1088 scored positions - enough for a
-  paired comparison between precisions, not enough to characterise the model's absolute
-  perplexity on natural text.
-* **Exact continuation match is a weak quality signal.** Section 6.4 shows fp16 and bf16
-  disagreeing on half of greedy continuations despite being numerically near-identical.
-  The metric is reported because it reflects what a user sees, but conclusions should
-  rest on the distribution-level numbers.
-* **Phase 5 used 100 prompts per class, 30 held out.** Enough to establish that a
-  direction exists at an effect size of *d* > 3, not enough to characterise its
-  variation across prompt types or categories.
-* **Phase 5 is correlational.** A direction that separates two prompt classes is not
-  evidence that the model *uses* that direction. Establishing that requires intervention
-  - ablating the direction or steering along it - which this project deliberately does
-  not do. Section 6.5 also shows the per-layer directions are related but not identical,
-  which observation alone cannot resolve.
-* **Quantized parameter counts are stored elements, not logical parameters.** 4-bit
-  weights are packed into `uint8`, so `param_count` undercounts; the `dtype_histogram`
-  in each run's metadata shows the real storage picture.
+* **One card, two sizes of one model family.** Nothing here shows the numbers transfer
+  to other GPUs, architectures or drivers.
+* **A desktop, not a rig.** Paired designs protect the comparisons; absolute numbers
+  still carry the machine's background load, which is why Phase 1 and Phase 7 differ by a
+  few percent for the same configuration.
+* **`transformers.generate`, not a serving stack.** At batch 1, launch overhead holds
+  every configuration to ~75% of its bandwidth roofline; CUDA graphs or a compiled
+  runtime would narrow that, and vLLM or TensorRT-LLM would be faster outright. The
+  decode path in §4 is a fix for this stack on this platform. On a build with flash
+  attention, stock `sdpa` is the right choice and `auto` selects it.
+* **The refusal classifier is substring matching** over the first 200 characters, as in
+  the original paper - a lower bound on refusal, and blind to degenerate output, which is
+  why fluency is measured alongside it.
+* **Small prompt sets.** 30-80 prompts per condition establish effects of the size seen
+  here (0% against 95%, with non-overlapping intervals); they cannot characterise
+  variation across harm categories.
+* **The perplexity corpus is 1088 scored positions**: enough for paired comparisons
+  between conditions, not for the model's absolute perplexity on natural text.
+* **The layer-selection rule was too simple** (§6), and is reported as it ran.
+* **Quantized parameter counts are stored elements**: 4-bit weights are packed into
+  `uint8`, so `param_count` undercounts them.
 
 ---
 
-## 8. Future work
+## 12. Scope and intent
 
-* Intervention experiments for Phase 5, done deliberately and with the safety
-  implications thought through rather than as an afterthought.
-* Batched throughput and a KV-cache memory model validated against measurement.
-* A second architecture, to separate model-specific effects from general ones.
-* Attention-pattern and per-head analysis, reusing the existing hook infrastructure.
-* AWQ and GPTQ alongside the bitsandbytes modes.
+Phase 6 reproduces a published result - Arditi et al. (2024) - that safety fine-tuning
+in chat models is mediated by a single removable direction. That finding is why the
+experiment matters for safety research: it shows how shallow this form of alignment is.
+The implementation stays on the measurement side of that line. Interventions are
+inference-time hooks removed after every condition; nothing is written to the weights;
+no modified weights and no fitted directions are published (`*.safetensors` is not
+committed, and Phase 6 needs a local Phase 5 run to exist). Completions to harmful
+prompts are classified, scored and discarded; only counts and summary statistics are
+recorded, and example text is kept only for harmless prompts.
 
 ---
 
@@ -440,23 +578,16 @@ standardised statistics rather than raw projection magnitudes.
 
 1. Arditi, Obeso, Syed, Paleka, Panickssery, Gurnee, Nanda (2024). *Refusal in Language
    Models Is Mediated by a Single Direction.* [arXiv:2406.11717](https://arxiv.org/abs/2406.11717)
-2. Chao, Debenedetti, Robey, Andriushchenko, Croce, Sehwag, Dobriban, Flammarion,
-   Pappas, Tramèr, Hassani, Wong (2024). *JailbreakBench: An Open Robustness Benchmark
-   for Jailbreaking Large Language Models.* [arXiv:2404.01318](https://arxiv.org/abs/2404.01318)
+2. Chao et al. (2024). *JailbreakBench: An Open Robustness Benchmark for Jailbreaking
+   Large Language Models.* [arXiv:2404.01318](https://arxiv.org/abs/2404.01318)
 3. Dettmers, Lewis, Belkada, Zettlemoyer (2022). *LLM.int8(): 8-bit Matrix Multiplication
    for Transformers at Scale.* [arXiv:2208.07339](https://arxiv.org/abs/2208.07339)
 4. Dettmers, Pagnoni, Holtzman, Zettlemoyer (2023). *QLoRA: Efficient Finetuning of
-   Quantized LLMs.* [arXiv:2305.14314](https://arxiv.org/abs/2305.14314) - source of the
-   NF4 data type.
-5. Elhage et al. (2021). *A Mathematical Framework for Transformer Circuits.*
-   [transformer-circuits.pub](https://transformer-circuits.pub/2021/framework/index.html) -
-   the residual-stream view the activation capture relies on.
-6. Qwen Team (2024). *Qwen2.5 Technical Report.* [arXiv:2412.15115](https://arxiv.org/abs/2412.15115)
-
-## Scope and intent
-
-This repository measures models; it does not modify them. Phase 5 reproduces the
-*analysis* in Arditi et al. - does a refusal direction exist, how strong is it, and
-where - and stops there. No weight editing, directional ablation or activation steering
-is implemented. Harmful-prompt completions are classified and discarded, never stored or
-reported.
+   Quantized LLMs.* [arXiv:2305.14314](https://arxiv.org/abs/2305.14314) - the NF4 data type.
+5. Williams, Waterman, Patterson (2009). *Roofline: An Insightful Visual Performance
+   Model for Multicore Architectures.* Communications of the ACM 52(4).
+6. Ainslie et al. (2023). *GQA: Training Generalized Multi-Query Transformer Models from
+   Multi-Head Checkpoints.* [arXiv:2305.13245](https://arxiv.org/abs/2305.13245)
+7. Elhage et al. (2021). *A Mathematical Framework for Transformer Circuits.*
+   [transformer-circuits.pub](https://transformer-circuits.pub/2021/framework/index.html)
+8. Qwen Team (2024). *Qwen2.5 Technical Report.* [arXiv:2412.15115](https://arxiv.org/abs/2412.15115)
