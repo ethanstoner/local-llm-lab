@@ -1,0 +1,8 @@
+batch_size,context_length,sdpa_no_gqa_decode_tok_s_median,sdpa_no_gqa_decode_tok_s_min,sdpa_no_gqa_decode_tok_s_max,sdpa_no_gqa_throughput_tok_s_median,sdpa_no_gqa_ttft_s_median,sdpa_no_gqa_peak_allocated_mib_max,sdpa_no_gqa_paging_suspected,sdpa_grouped_decode_decode_tok_s_median,sdpa_grouped_decode_decode_tok_s_min,sdpa_grouped_decode_decode_tok_s_max,sdpa_grouped_decode_throughput_tok_s_median,sdpa_grouped_decode_ttft_s_median,sdpa_grouped_decode_peak_allocated_mib_max,sdpa_grouped_decode_paging_suspected,sdpa_grouped_decode_vs_sdpa_no_gqa_ratio_median,sdpa_grouped_decode_vs_sdpa_no_gqa_ratio_min,sdpa_grouped_decode_vs_sdpa_no_gqa_ratio_max,sdpa_grouped_decode_vs_sdpa_no_gqa_n_pairs
+1,512,42.346,42.316,42.766,42.35,0.05874,14635.3,False,43.03,42.953,43.41,43.03,0.0599,14635.3,False,1.015,1.015,1.0162,3
+2,512,39.572,39.251,40.008,79.14,0.10683,14735.8,False,41.416,40.448,41.681,82.83,0.10674,14735.8,False,1.0418,1.0221,1.0552,3
+4,512,38.028,37.963,38.303,152.11,0.20695,14928.8,False,40.922,40.713,40.937,163.69,0.20571,14928.8,False,1.0724,1.0688,1.0761,3
+8,512,35.9,35.633,36.135,287.2,0.41861,15319.4,False,40.392,40.277,40.777,323.13,0.41943,15319.4,False,1.1285,1.1219,1.1335,3
+16,512,29.043,28.519,29.467,464.69,0.85109,16101.6,False,38.947,38.63,39.271,623.16,0.85373,16101.6,False,1.3327,1.3301,1.3657,3
+32,512,21.01,20.565,21.217,672.33,1.75192,17665.9,False,35.008,34.564,35.363,1120.26,1.72705,17665.9,False,1.65,1.6451,1.7196,3
+64,512,13.88,13.778,14.105,888.3,3.49737,20794.6,True,28.986,28.328,29.048,1855.08,3.42633,20794.6,True,2.0551,2.041,2.1084,3

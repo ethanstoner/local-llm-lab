@@ -1,0 +1,50 @@
+13:00:38 | INFO    | src.utils.seed               | Seeded with 1234; deterministic algorithms NOT requested
+13:00:38 | DEBUG   | src.models.attention         | Registered attention implementation 'sdpa_no_gqa'
+13:00:38 | DEBUG   | src.models.attention         | Registered attention implementation 'sdpa_grouped_decode'
+13:00:38 | DEBUG   | src.models.attention         | Registered attention implementation 'fp32_reference'
+13:00:38 | INFO    | src.models.loader            | Loading Qwen/Qwen2.5-7B-Instruct at bf16 (bfloat16; the reference precision for this project.) onto cuda:0 from local files
+13:00:38 | DEBUG   | src.monitoring.gpu           | GPU sampling disabled by config
+13:00:45 | INFO    | src.models.loader            | Loaded in 6.72s | weights 14526 MiB | device idle 16078 MiB (baseline 1528 MiB)
+13:02:01 | INFO    | __main__                     | r0 sdpa_no_gqa b1 c512                   decode  42.32 tok/s  x1   =     42.3 tok/s  peak   14635 MiB
+13:02:04 | INFO    | __main__                     | r0 sdpa_grouped_decode b1 c512           decode  42.95 tok/s  x1   =     43.0 tok/s  peak   14635 MiB
+13:02:08 | INFO    | __main__                     | r0 sdpa_no_gqa b2 c512                   decode  39.57 tok/s  x2   =     79.1 tok/s  peak   14736 MiB
+13:02:11 | INFO    | __main__                     | r0 sdpa_grouped_decode b2 c512           decode  40.45 tok/s  x2   =     80.9 tok/s  peak   14736 MiB
+13:02:15 | INFO    | __main__                     | r0 sdpa_no_gqa b4 c512                   decode  38.03 tok/s  x4   =    152.1 tok/s  peak   14929 MiB
+13:02:19 | INFO    | __main__                     | r0 sdpa_grouped_decode b4 c512           decode  40.92 tok/s  x4   =    163.7 tok/s  peak   14929 MiB
+13:02:23 | INFO    | __main__                     | r0 sdpa_no_gqa b8 c512                   decode  35.63 tok/s  x8   =    285.1 tok/s  peak   15319 MiB
+13:02:27 | INFO    | __main__                     | r0 sdpa_grouped_decode b8 c512           decode  40.39 tok/s  x8   =    323.1 tok/s  peak   15319 MiB
+13:02:34 | INFO    | __main__                     | r0 sdpa_no_gqa b16 c512                  decode  29.04 tok/s  x16  =    464.7 tok/s  peak   16102 MiB
+13:02:39 | INFO    | __main__                     | r0 sdpa_grouped_decode b16 c512          decode  38.63 tok/s  x16  =    618.1 tok/s  peak   16102 MiB
+13:02:48 | INFO    | __main__                     | r0 sdpa_no_gqa b32 c512                  decode  21.22 tok/s  x32  =    678.9 tok/s  peak   17666 MiB
+13:02:56 | INFO    | __main__                     | r0 sdpa_grouped_decode b32 c512          decode  35.01 tok/s  x32  =   1120.3 tok/s  peak   17666 MiB
+13:03:12 | INFO    | __main__                     | r0 sdpa_no_gqa b64 c512                  decode  14.10 tok/s  x64  =    902.7 tok/s  peak   20794 MiB  PAGING?
+13:03:23 | INFO    | __main__                     | r0 sdpa_grouped_decode b64 c512          decode  28.99 tok/s  x64  =   1855.1 tok/s  peak   20795 MiB  PAGING?
+13:03:26 | INFO    | __main__                     | r1 sdpa_grouped_decode b1 c512           decode  43.41 tok/s  x1   =     43.4 tok/s  peak   14635 MiB
+13:03:29 | INFO    | __main__                     | r1 sdpa_no_gqa b1 c512                   decode  42.77 tok/s  x1   =     42.8 tok/s  peak   14635 MiB
+13:03:33 | INFO    | __main__                     | r1 sdpa_grouped_decode b2 c512           decode  41.68 tok/s  x2   =     83.4 tok/s  peak   14736 MiB
+13:03:36 | INFO    | __main__                     | r1 sdpa_no_gqa b2 c512                   decode  40.01 tok/s  x2   =     80.0 tok/s  peak   14736 MiB
+13:03:40 | INFO    | __main__                     | r1 sdpa_grouped_decode b4 c512           decode  40.71 tok/s  x4   =    162.9 tok/s  peak   14929 MiB
+13:03:44 | INFO    | __main__                     | r1 sdpa_no_gqa b4 c512                   decode  37.96 tok/s  x4   =    151.9 tok/s  peak   14929 MiB
+13:03:48 | INFO    | __main__                     | r1 sdpa_grouped_decode b8 c512           decode  40.28 tok/s  x8   =    322.2 tok/s  peak   15319 MiB
+13:03:52 | INFO    | __main__                     | r1 sdpa_no_gqa b8 c512                   decode  35.90 tok/s  x8   =    287.2 tok/s  peak   15319 MiB
+13:03:57 | INFO    | __main__                     | r1 sdpa_grouped_decode b16 c512          decode  39.27 tok/s  x16  =    628.3 tok/s  peak   16102 MiB
+13:04:04 | INFO    | __main__                     | r1 sdpa_no_gqa b16 c512                  decode  29.47 tok/s  x16  =    471.5 tok/s  peak   16102 MiB
+13:04:11 | INFO    | __main__                     | r1 sdpa_grouped_decode b32 c512          decode  34.56 tok/s  x32  =   1106.1 tok/s  peak   17666 MiB
+13:04:21 | INFO    | __main__                     | r1 sdpa_no_gqa b32 c512                  decode  21.01 tok/s  x32  =    672.3 tok/s  peak   17666 MiB
+13:04:32 | INFO    | __main__                     | r1 sdpa_grouped_decode b64 c512          decode  28.33 tok/s  x64  =   1813.0 tok/s  peak   20794 MiB  PAGING?
+13:04:49 | INFO    | __main__                     | r1 sdpa_no_gqa b64 c512                  decode  13.88 tok/s  x64  =    888.3 tok/s  peak   20795 MiB  PAGING?
+13:04:52 | INFO    | __main__                     | r2 sdpa_no_gqa b1 c512                   decode  42.35 tok/s  x1   =     42.3 tok/s  peak   14635 MiB
+13:04:55 | INFO    | __main__                     | r2 sdpa_grouped_decode b1 c512           decode  43.03 tok/s  x1   =     43.0 tok/s  peak   14635 MiB
+13:04:59 | INFO    | __main__                     | r2 sdpa_no_gqa b2 c512                   decode  39.25 tok/s  x2   =     78.5 tok/s  peak   14736 MiB
+13:05:02 | INFO    | __main__                     | r2 sdpa_grouped_decode b2 c512           decode  41.42 tok/s  x2   =     82.8 tok/s  peak   14736 MiB
+13:05:06 | INFO    | __main__                     | r2 sdpa_no_gqa b4 c512                   decode  38.30 tok/s  x4   =    153.2 tok/s  peak   14929 MiB
+13:05:09 | INFO    | __main__                     | r2 sdpa_grouped_decode b4 c512           decode  40.94 tok/s  x4   =    163.7 tok/s  peak   14929 MiB
+13:05:14 | INFO    | __main__                     | r2 sdpa_no_gqa b8 c512                   decode  36.14 tok/s  x8   =    289.1 tok/s  peak   15319 MiB
+13:05:18 | INFO    | __main__                     | r2 sdpa_grouped_decode b8 c512           decode  40.78 tok/s  x8   =    326.2 tok/s  peak   15319 MiB
+13:05:24 | INFO    | __main__                     | r2 sdpa_no_gqa b16 c512                  decode  28.52 tok/s  x16  =    456.3 tok/s  peak   16102 MiB
+13:05:29 | INFO    | __main__                     | r2 sdpa_grouped_decode b16 c512          decode  38.95 tok/s  x16  =    623.2 tok/s  peak   16102 MiB
+13:05:39 | INFO    | __main__                     | r2 sdpa_no_gqa b32 c512                  decode  20.56 tok/s  x32  =    658.1 tok/s  peak   17666 MiB
+13:05:46 | INFO    | __main__                     | r2 sdpa_grouped_decode b32 c512          decode  35.36 tok/s  x32  =   1131.6 tok/s  peak   17666 MiB
+13:06:03 | INFO    | __main__                     | r2 sdpa_no_gqa b64 c512                  decode  13.78 tok/s  x64  =    881.8 tok/s  peak   20794 MiB  PAGING?
+13:06:15 | INFO    | __main__                     | r2 sdpa_grouped_decode b64 c512          decode  29.05 tok/s  x64  =   1859.1 tok/s  peak   20795 MiB  PAGING?
+13:06:15 | DEBUG   | src.models.attention         | flash attention unavailable: No available kernel. Aborting execution.
