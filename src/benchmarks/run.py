@@ -120,14 +120,20 @@ def main(argv: Sequence[str] | None = None) -> int:
         meta["gpu"]["used_by_other_processes_mib"],
     )
 
+    def checkpoint(partial) -> None:
+        """Persist after each precision, so a later crash cannot erase earlier work."""
+        write_json(run_dir / "metrics.json", {"meta": meta, "partial": True, **partial.to_dict()})
+        write_csv(run_dir / "results.csv", partial.rows())
+
     result = run_sweep(
         config,
         run_dir,
         device_index=args.device,
         validate_sync_overhead=not args.no_validate,
+        checkpoint=checkpoint,
     )
 
-    payload = {"meta": meta, **result.to_dict()}
+    payload = {"meta": meta, "partial": False, **result.to_dict()}
     write_json(run_dir / "metrics.json", payload)
 
     rows = result.rows()

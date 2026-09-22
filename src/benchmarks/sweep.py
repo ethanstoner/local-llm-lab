@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 import torch
 
@@ -158,6 +158,7 @@ def run_sweep(
     run_dir: Path,
     device_index: int = 0,
     validate_sync_overhead: bool = True,
+    checkpoint: Callable[[SweepResult], None] | None = None,
 ) -> SweepResult:
     """Execute the full precision x context-length grid.
 
@@ -167,6 +168,9 @@ def run_sweep(
         device_index: CUDA device to use.
         validate_sync_overhead: Run the per-token-synchronization control measurement
             once, on the smallest context of the first working precision.
+        checkpoint: Called with the partial result after each precision finishes. A
+            long sweep should not be able to lose completed measurements to a crash in
+            a later cell, so the CLI uses this to write results incrementally.
 
     Returns:
         A :class:`SweepResult` containing every cell, including failures.
@@ -192,7 +196,13 @@ def run_sweep(
 
     for precision in runnable:
         loaded: LoadedModel | None = None
-        with oom_guard(f"load:{precision}", device=device_index) as load_outcome:
+        # Tolerant on purpose, unlike the per-cell guard below. Anything that stops one
+        # precision from loading - OOM, an unsupported dtype, a bitsandbytes problem -
+        # is a fact about that precision on this machine, and it must not discard the
+        # measurements the earlier precisions already produced.
+        with oom_guard(
+            f"load:{precision}", device=device_index, reraise_non_oom=False
+        ) as load_outcome:
             loaded = load_model(
                 config.model,
                 precision,
@@ -215,6 +225,8 @@ def run_sweep(
                         failure=load_outcome.to_dict(),
                     )
                 )
+            if checkpoint is not None:
+                checkpoint(result)
             continue
 
         result.models[precision] = loaded.describe()
@@ -251,6 +263,9 @@ def run_sweep(
         del model_ref, tokenizer_ref, loaded
         freed = release_memory(device_index)
         logger.info("Unloaded %s; device now holds %.0f MiB", precision, freed["used_mib"] or -1)
+
+        if checkpoint is not None:
+            checkpoint(result)
 
     return result
 
