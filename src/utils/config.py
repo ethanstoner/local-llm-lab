@@ -213,6 +213,7 @@ class InterventionConfig:
     include_bundled_prompts: bool = True
     measure_capability: bool = True
     max_perplexity_ratio: float = 1.05
+    max_relative_depth: float = 0.8
     judge_model_id: str | None = None
     judge_local_path: str | None = None
 
@@ -227,6 +228,8 @@ class InterventionConfig:
             raise ConfigError("intervention.source_layers must be non-negative block indices")
         if self.target_layer is not None and self.target_layer < 0:
             raise ConfigError("intervention.target_layer must be a non-negative block index")
+        if not 0.0 < self.max_relative_depth <= 1.0:
+            raise ConfigError("intervention.max_relative_depth must be in (0, 1]")
         if self.max_perplexity_ratio < 1.0:
             raise ConfigError("intervention.max_perplexity_ratio must be >= 1.0")
         if any(c <= 0 for c in self.addition_coefficients):

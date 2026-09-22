@@ -416,6 +416,17 @@ def main(argv: Sequence[str] | None = None) -> int:
             sampler.mark("capability:done")
 
         # --- selection: the causally best layer, chosen without the bundled set ----
+        # Screen every layer that passes the cheap criteria (depth, perplexity) for the
+        # expensive one - does adding its direction induce refusal? - on the selection
+        # split only, so the bundled prompts stay out of the choice.
+        depth_limit = iv.max_relative_depth * n_layers
+        screen_prompts = harmless_sets[SELECTION_SET]
+        screen_baseline = evaluate_condition(
+            model, tokenizer, screen_prompts, NoIntervention, condition="screen:baseline",
+            prompt_set=SELECTION_SET, max_new_tokens=iv.max_new_tokens, batch_size=iv.batch_size,
+            device=device, scorers={"self": model},
+        )
+        baseline_rate = screen_baseline.refusal_rate
         selection_rows = []
         for layer in sweep_layers:
             held = next(
@@ -428,20 +439,35 @@ def main(argv: Sequence[str] | None = None) -> int:
                 .get("teacher_forced", {})
                 .get("perplexity_ratio")
             )
-            selection_rows.append(
-                {"layer": layer, "refusals": held.refusals, "n": held.n, "perplexity_ratio": ratio}
-            )
-        selected = select_causal_layer(selection_rows, iv.max_perplexity_ratio)
+            row: dict[str, Any] = {
+                "layer": layer, "refusals": held.refusals, "n": held.n, "perplexity_ratio": ratio,
+                "harmless_baseline_rate": round(baseline_rate, 4),
+                "induced_refusals": None, "induced_n": None,
+            }
+            if layer < depth_limit and ratio is not None and ratio <= iv.max_perplexity_ratio:
+                vector = source.raw_norm(layer) * source.directions[layer]
+                induced = evaluate_condition(
+                    model, tokenizer, screen_prompts,
+                    lambda v=vector, layer=layer: ActivationAddition(model, layer, v),
+                    condition=f"screen:add:L{layer}x1", prompt_set=SELECTION_SET,
+                    max_new_tokens=iv.max_new_tokens, batch_size=iv.batch_size,
+                    device=device, scorers={"self": model},
+                )
+                row["induced_refusals"], row["induced_n"] = induced.refusals, induced.n
+            selection_rows.append(row)
+        selected = select_causal_layer(selection_rows, iv.max_perplexity_ratio, depth_limit)
         payload["selection"] = {
             "rule": (
-                f"lowest refusal rate on the {SELECTION_SET} harmful prompts among source "
-                f"layers whose ablation keeps corpus perplexity within "
-                f"{iv.max_perplexity_ratio:g}x of the intact model; ties go to the lower "
-                f"perplexity. The bundled prompt set plays no part, so its results for the "
-                f"selected layer are an untouched test."
+                f"Arditi et al. (2024) criteria on the {SELECTION_SET} split: layers before "
+                f"{iv.max_relative_depth:g} of the network's depth, whose ablation keeps corpus "
+                f"perplexity within {iv.max_perplexity_ratio:g}x, and whose direction added at "
+                f"1x raises harmless-prompt refusal above the unmodified rate (95% Wilson lower "
+                f"bound); among those, the lowest harmful-prompt refusal with the direction "
+                f"ablated, ties to lower perplexity. The bundled prompt set plays no part."
             ),
             "observational_layer": target,
             "causal_layer": selected,
+            "depth_limit_exclusive": depth_limit,
             "candidates": selection_rows,
         }
         logger.info("Observational best layer %d; causal selection %s", target, selected)

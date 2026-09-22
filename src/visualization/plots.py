@@ -789,8 +789,8 @@ def intervention_overview(payload: Mapping[str, Any], path: Path, subtitle: str 
     cheapest = min(effective, key=lambda r: r["perplexity_ratio"])["source_layer"] if effective else None
 
     reasons: dict[int, list[str]] = {}
-    for layer, why in ((cheapest, "cheapest to reach <=5%"), (observed, "Phase 5 best separation"),
-                       (picked, "selection rule's pick")):
+    for layer, why in ((picked, "selection rule's pick"), (cheapest, "cheapest to reach <=5%"),
+                       (observed, "Phase 5 best separation")):
         if layer is not None:
             reasons.setdefault(layer, []).append(why)
 
