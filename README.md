@@ -8,7 +8,7 @@
 ![python](https://img.shields.io/badge/python-3.12-3776ab)
 ![pytorch](https://img.shields.io/badge/pytorch-2.6-ee4c2c)
 ![transformers](https://img.shields.io/badge/transformers-4.57-ffcc4d)
-![tests](https://img.shields.io/badge/tests-172%20(170%20in%20CI%20%C2%B7%202%20GPU--only)-2ea44f)
+![tests](https://img.shields.io/badge/tests-173%20(171%20in%20CI%20%C2%B7%202%20GPU--only)-2ea44f)
 ![lint](https://img.shields.io/badge/lint-ruff-261230)
 ![license](https://img.shields.io/badge/license-MIT-blue)
 
@@ -21,17 +21,18 @@ and an RTX 4090. It asks where inference time goes, how close the implementation
 what the hardware allows, and whether the model's refusal behaviour runs through a single
 direction inside the network - then acts on the answers.
 
-Every empirical result comes from a recorded run, stored alongside the hardware, software
-versions, git commit and config that produced it, and every figure is drawn from those
-files. Analytical quantities - the roofline ceilings - are labelled as modelled.
+Every headline result comes from a recorded run in `results/`, stored alongside the
+hardware, software versions, git commit and config that produced it, and every figure is
+drawn from those files. Modelled quantities (the roofline ceilings) and the few
+diagnostic numbers from exploratory runs are labelled as such in the full write-up.
 
 | | |
 |---|---|
 | **Faster decoding** | A new decode-attention path: **1.57x** faster at 16k context, **1.65x** at batch 32, with no measurable fidelity regression against an FP32-attention reference |
-| **Explained performance** | A roofline with no fitted parameters: the old attention path runs at a steady 68-80% of it at every context length and batch size |
+| **Explained performance** | A roofline with no fitted parameters: the old attention path runs at 68-80% of it at every context length and batch size |
 | **Causal interpretability** | Removing one direction takes refusal from **95% to 0%**; adding it takes harmless-prompt refusal from **3% to 100%**; random directions do nothing |
 | **Rigor** | Paired ABBA benchmarks, held-out splits, random controls, 95% intervals, FP32 reference checks |
-| **Debugging** | Four silent-correctness bugs caught by the project's own measurement checks and fixed - including a padding-mask gap in how transformers handles custom attention backends |
+| **Debugging** | Four silent-correctness problems found and fixed - including a padding-mask gap in how transformers handles custom attention backends, caught by a correctness check |
 
 ---
 
@@ -55,7 +56,7 @@ than the effect itself:
 | 2k | 38.3 | 39.1 | 1.02x |
 | 4k | 32.5 | 37.8 | 1.17x |
 | 8k | 26.7 | 37.4 | 1.37x |
-| 16k | 19.2 | 30.2 | **1.57x** |
+| 16k | 19.1 | 30.2 | **1.57x** |
 | batch 32 at 512 tokens | 672 aggregate | 1120 aggregate | **1.65x** |
 
 ![decode A/B](figures/decode_backend_ab.png)
@@ -66,8 +67,8 @@ From the model config and measured hardware ceilings (947 GB/s read bandwidth,
 157.5 TFLOP/s bf16), a byte count per generated token predicts how fast decoding *can*
 run. The KV cache is only 0.9 GB at 16k context against 15.2 GB of weights, so an ideal
 decoder would lose ~6% there - but throughput fell 56%. Modelling the extra copies
-explains it: the old path holds a constant 68-80% of its modelled ceiling at every context
-and batch size. That diagnosis is what pointed at the fix above.
+explains it: the old path holds 68-80% of its modelled ceiling at every context and batch
+size. That diagnosis is what pointed at the fix above.
 
 ### 3. Refusal runs through one direction - and the best place to see it is not the best place to cut it
 
@@ -79,9 +80,10 @@ inference-time hooks:
   Three random directions leave it at 95%.
 - **Adding it** makes the model refuse **100%** of harmless requests - including
   explaining how to use a fire extinguisher. Random vectors of the same size: 0-2.5%.
-- The layers where the direction **separates** prompts best (21-24) are poor places to
-  remove it: 30-65% of refusals survive and perplexity rises 25-36%. Layer 16's direction
-  removes 97.5% of refusals at **no measurable perplexity cost**.
+- How well a layer **separates** prompts is not a guide to where removal works. Layer
+  16's direction (d = 2.2, far below the peak) leaves only 2.5% of refusals with **no
+  perplexity change**, while layers 21-24 - among the best-separating - leave 30-65% and
+  cost 26-36% perplexity.
 - At **1.5B**, adding the direction still induces refusal, but no layer removes it without
   damaging the model - the single-direction story holds cleanly at 7B and only partly at
   1.5B.
@@ -93,14 +95,14 @@ prompts are classified and discarded - only counts are stored.
 
 ### 4. Debugging highlights
 
-Each of these was caught by a measurement and fixed. The two numerical bugs are guarded
-by regression tests that were checked to fail on the original code.
+Each was found and fixed; the two numerical ones were caught by correctness checks and
+are guarded by regression tests that were checked to fail on the original code.
 
 - **Custom attention backends received no padding mask.** Transformers builds masks from a
   separate registry and silently passes none for unregistered names, so batched passes
   attended to padding. Fixed, and every affected phase re-run - which doubled nf4's
   measured quality loss.
-- **bf16 attention scores cost up to 8 nats of KL** in an early version of the fast path,
+- **bf16 attention scores cost over 8 nats of KL on single steps** in an early version of the fast path,
   which looked right on speed and output text; an FP32-reference check caught it, and
   scores are now computed in float32.
 - **A `.gitignore` rule for model weights also matched `src/models/`**, so the loader
@@ -121,7 +123,7 @@ by regression tests that were checked to fail on the original code.
   bugs they guard against.
 - **Transformer internals and interpretability** - attention backends, KV caches, forward
   hooks, directional ablation and activation steering, at two model scales.
-- **Software engineering** - validated configs, self-describing result directories, 172
+- **Software engineering** - validated configs, self-describing result directories, 173
   tests, lint and CI, figures regenerated from data with provenance captions.
 
 ---
@@ -141,7 +143,7 @@ by regression tests that were checked to fail on the original code.
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\setup_env.ps1        # venv, torch 2.6 cu124, pinned stack
-.\venv\Scripts\python.exe -m pytest tests/ -q                           # 172 tests, CPU-only, no network
+.\venv\Scripts\python.exe -m pytest tests/ -q                           # 173 tests, CPU-only, no network
 powershell -ExecutionPolicy Bypass -File .\scripts\fetch_model.ps1 -Repo Qwen/Qwen2.5-7B-Instruct
 powershell -ExecutionPolicy Bypass -File .\scripts\fetch_model.ps1 -Repo Qwen/Qwen2.5-1.5B-Instruct
 powershell -ExecutionPolicy Bypass -File .\scripts\fetch_datasets.ps1
