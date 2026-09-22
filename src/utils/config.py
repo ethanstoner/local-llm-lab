@@ -25,6 +25,7 @@ VALID_ATTN_IMPLEMENTATIONS = (
     "auto",
     "sdpa",
     "sdpa_no_gqa",
+    "sdpa_grouped_decode",
     "eager",
     "flash_attention_2",
 )
