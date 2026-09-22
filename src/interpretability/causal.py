@@ -251,29 +251,56 @@ def evaluate_condition(
 
 
 def select_causal_layer(
-    candidates: Sequence[dict[str, Any]], max_perplexity_ratio: float
+    candidates: Sequence[dict[str, Any]],
+    max_perplexity_ratio: float,
+    max_layer_exclusive: float | None = None,
 ) -> int | None:
-    """Pick the source layer whose ablation best removes refusal at acceptable cost.
+    """Pick the layer whose direction best removes refusal, among directions that work.
 
-    This is the selection criterion of Arditi et al. in simplified form: a direction
-    that removes refusal only by damaging the network is disqualified. Among candidates
-    whose ablation keeps corpus perplexity within ``max_perplexity_ratio`` of the intact
-    model, the lowest refusal rate wins, with ties broken by the smaller perplexity cost.
-    A candidate with no perplexity measurement is ineligible rather than assumed harmless.
+    The selection criteria of Arditi et al. (2024), applied to measured quantities. A
+    candidate layer is eligible only if all three hold:
+
+    * **It is not near the output.** Layers at or beyond ``max_layer_exclusive`` are
+      excluded: a direction read from the last few blocks can suppress refusal by
+      disrupting the output distribution directly, and adding it there produces
+      degenerate text rather than refusal.
+    * **Removing it is cheap.** Ablating it keeps corpus perplexity within
+      ``max_perplexity_ratio`` of the intact model.
+    * **Adding it induces refusal.** The 95% Wilson lower bound of the refusal rate on
+      harmless prompts with the direction added exceeds the unmodified model's rate on
+      the same prompts. A direction that removes refusal but cannot produce it is not
+      evidence of a refusal representation.
+
+    Among eligible layers the lowest refusal rate on harmful prompts with the direction
+    ablated wins; ties go to the smaller perplexity cost, then the earlier layer. Any
+    missing measurement makes a candidate ineligible rather than assumed acceptable.
 
     Args:
-        candidates: Rows with ``layer``, ``refusals``, ``n`` and ``perplexity_ratio``.
+        candidates: Rows with ``layer``, ``refusals`` and ``n`` (harmful prompts, direction
+            ablated), ``perplexity_ratio``, ``induced_refusals`` and ``induced_n``
+            (harmless prompts, direction added) and ``harmless_baseline_rate``.
         max_perplexity_ratio: The capability budget.
+        max_layer_exclusive: Layers from here on are excluded; ``None`` disables the
+            depth filter.
 
     Returns:
         The selected layer, or ``None`` if nothing is eligible.
     """
+
+    def induces(c: dict[str, Any]) -> bool:
+        if c.get("induced_n") in (None, 0) or c.get("harmless_baseline_rate") is None:
+            return False
+        low, _ = wilson_interval(int(c["induced_refusals"]), int(c["induced_n"]))
+        return low > float(c["harmless_baseline_rate"])
+
     eligible = [
         c
         for c in candidates
-        if c.get("perplexity_ratio") is not None
+        if c.get("n")
+        and c.get("perplexity_ratio") is not None
         and c["perplexity_ratio"] <= max_perplexity_ratio
-        and c.get("n")
+        and (max_layer_exclusive is None or c["layer"] < max_layer_exclusive)
+        and induces(c)
     ]
     if not eligible:
         return None

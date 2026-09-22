@@ -1,6 +1,6 @@
 {
-  "experiment": "phase6_refusal_intervention_1.5b",
-  "timestamp_utc": "2026-09-22T20:21:40+00:00",
+  "experiment": "phase6_refusal_intervention",
+  "timestamp_utc": "2026-09-22T20:58:17+00:00",
   "host": {
     "platform": "Windows-11-10.0.26200-SP0",
     "processor": "AMD64 Family 26 Model 68 Stepping 0, AuthenticAMD",
@@ -31,25 +31,25 @@
     "nvidia-ml-py": "13.610.43"
   },
   "git": {
-    "commit": "7e88028bfcf0ff365b964ef19be2e45adb1d4629",
+    "commit": "bf2e415093daf87dda8933827ed54a73d63da231",
     "dirty": true,
     "branch": "main"
   },
   "config": {
     "experiment": {
-      "name": "phase6_refusal_intervention_1.5b",
+      "name": "phase6_refusal_intervention",
       "seed": 1234,
       "output_root": "results",
       "notes": "Necessity (ablation vs random and low-signal controls), per-layer causal sweep, sufficiency (addition dose-response vs a random vector of equal norm), and the capability cost of ablation.\n",
       "deterministic": true
     },
     "model": {
-      "id": "Qwen/Qwen2.5-1.5B-Instruct",
+      "id": "Qwen/Qwen2.5-7B-Instruct",
       "revision": "main",
       "trust_remote_code": false,
       "attn_implementation": "auto",
       "tokenizer_id": null,
-      "local_path": "models/Qwen2.5-1.5B-Instruct"
+      "local_path": "models/Qwen2.5-7B-Instruct"
     },
     "benchmark": {
       "precisions": [
@@ -95,7 +95,7 @@
     },
     "intervention": {
       "direction_run": "latest",
-      "direction_experiment": "phase5_refusal_direction_1.5b",
+      "direction_experiment": "phase5_refusal_direction",
       "target_layer": null,
       "source_layers": [
         0,
@@ -131,8 +131,9 @@
       "include_bundled_prompts": true,
       "measure_capability": true,
       "max_perplexity_ratio": 1.05,
-      "judge_model_id": "Qwen/Qwen2.5-7B-Instruct",
-      "judge_local_path": "models/Qwen2.5-7B-Instruct"
+      "max_relative_depth": 0.8,
+      "judge_model_id": "Qwen/Qwen2.5-1.5B-Instruct",
+      "judge_local_path": "models/Qwen2.5-1.5B-Instruct"
     },
     "comparison": {
       "backends": [
@@ -146,7 +147,7 @@
       "fidelity_steps": 0,
       "fidelity_reference": null
     },
-    "source_path": "configs\\intervention_1.5b.yaml"
+    "source_path": "configs\\intervention.yaml"
   },
   "determinism": {
     "seed": 1234,
@@ -158,10 +159,10 @@
     "warnings": []
   },
   "direction_source": {
-    "run_dir": "results/phase5_refusal_direction_1.5b/20260922T202126Z",
-    "directions_sha256": "c014b5aaa8227b14290501604c1d0b9965445065b02f11140906a623c28835da"
+    "run_dir": "results/phase5_refusal_direction/20260922T200626Z",
+    "directions_sha256": "4cd61581c5cc683a95d7d8ab8ac012fef115e895f7a00d174082ddaf17891654"
   },
-  "target_layer": 18,
+  "target_layer": 20,
   "prompt_sets": {
     "harmful": {
       "jbb_heldout": 30,
@@ -172,7 +173,7 @@
       "bundled": 50
     }
   },
-  "run_dir": "C:\\Users\\ethan\\Desktop\\Coding Projects\\local-llm-lab\\results\\phase6_refusal_intervention_1.5b\\20260922T202140Z",
+  "run_dir": "C:\\Users\\ethan\\Desktop\\Coding Projects\\local-llm-lab\\results\\phase6_refusal_intervention\\20260922T205817Z",
   "scope": "Inference-time hooks only, removed after each condition. No weights are modified or saved. Harmful-prompt completions are classified, scored and discarded; only aggregate statistics are written.",
   "reference": "Arditi et al. 2024, 'Refusal in Language Models Is Mediated by a Single Direction', arXiv:2406.11717"
 }

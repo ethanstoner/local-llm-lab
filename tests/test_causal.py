@@ -22,8 +22,12 @@ from src.interpretability.stats import wilson_interval
 from src.utils.config import ConfigError, load_config
 
 
-def _row(layer: int, refusals: int, ratio: float | None, n: int = 30) -> dict:
-    return {"layer": layer, "refusals": refusals, "n": n, "perplexity_ratio": ratio}
+def _row(layer: int, refusals: int, ratio: float | None, n: int = 30, induced: int | None = 25) -> dict:
+    return {
+        "layer": layer, "refusals": refusals, "n": n, "perplexity_ratio": ratio,
+        "induced_refusals": induced, "induced_n": None if induced is None else 30,
+        "harmless_baseline_rate": 0.05,
+    }
 
 
 def test_selection_prefers_lowest_refusal_within_budget() -> None:
@@ -36,6 +40,35 @@ def test_selection_prefers_lowest_refusal_within_budget() -> None:
 def test_selection_breaks_ties_on_cost_then_layer() -> None:
     rows = [_row(18, 7, 1.03), _row(16, 7, 1.01), _row(14, 7, 1.01)]
     assert select_causal_layer(rows, 1.05) == 14
+
+
+def test_selection_excludes_layers_near_the_output() -> None:
+    rows = [_row(16, 2, 0.99), _row(27, 0, 1.03)]
+    assert select_causal_layer(rows, 1.05, max_layer_exclusive=22.4) == 16
+    assert select_causal_layer(rows, 1.05, max_layer_exclusive=None) == 27
+
+
+def test_selection_requires_the_direction_to_induce_refusal() -> None:
+    # Layer 14 removes refusal best, but adding it does nothing above baseline.
+    rows = [_row(14, 0, 1.01, induced=2), _row(16, 2, 0.99, induced=20)]
+    assert select_causal_layer(rows, 1.05) == 16
+    # Not measured is not the same as passing.
+    assert select_causal_layer([_row(16, 2, 0.99, induced=None)], 1.05) is None
+
+
+def test_selection_rejects_the_case_the_simplified_rule_got_wrong() -> None:
+    """The first run: layer 27 won on a perplexity tie-break and its addition degenerated.
+
+    Its measured induction (4/30 at 1x against a 2/30 baseline) is not significantly above
+    baseline, and it sits past 80% of a 28-layer network - either criterion excludes it.
+    """
+    rows = [
+        {**_row(14, 0, 1.0457, induced=20), "harmless_baseline_rate": 2 / 30},
+        {**_row(16, 2, 0.9947, induced=19), "harmless_baseline_rate": 2 / 30},
+        {**_row(27, 0, 1.0327, induced=4), "harmless_baseline_rate": 2 / 30},
+    ]
+    assert select_causal_layer(rows, 1.05, max_layer_exclusive=22.4) == 14
+    assert select_causal_layer(rows, 1.05, max_layer_exclusive=None) == 14
 
 
 def test_selection_treats_missing_cost_as_ineligible() -> None:
@@ -155,6 +188,7 @@ intervention:
         "  addition_coefficients: [0.0]",
         "  source_layers: [-1]",
         "  max_perplexity_ratio: 0.9",
+        "  max_relative_depth: 1.5",
         "  typo_key: 1",
     ):
         with pytest.raises(ConfigError):
