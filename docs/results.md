@@ -7,7 +7,11 @@ the reasoning for each conclusion. The measurement decisions are in
 
 Throughout, *measured* values come from recorded runs in `results/`; *modelled* values -
 the roofline ceilings - are derived analytically from the model config and measured
-hardware ceilings, and are labelled as such.
+hardware ceilings, and are labelled as such. A few diagnostic numbers come from
+exploratory or superseded runs that are not kept in `results/`; these are marked
+*(diagnostic)* and described in [`PROGRESS.md`](../PROGRESS.md). Each run's metadata
+records its git commit and whether the working tree had uncommitted changes; most
+runs here were made from such a tree, as the metadata shows.
 
 ## Contents
 
@@ -30,11 +34,11 @@ hardware ceilings, and are labelled as such.
 |---|---|
 | GPU | NVIDIA GeForce RTX 4090, 24564 MiB, compute capability 8.9 |
 | Measured ceilings | 947 GB/s streaming read · 884-891 GB/s at the MLP GEMV shapes · 157.5 TFLOP/s bf16 GEMM |
-| Driver | 610.88 (CUDA UMD 13.3) |
+| Driver | 610.88 |
 | OS / Python | Windows 11 Pro 26200 · Python 3.12.10 |
 | Stack | torch 2.6.0+cu124 · transformers 4.57.0 · bitsandbytes 0.49.0 |
 
-This is a working desktop, not a benchmarking rig: other applications hold 1.5-2.2 GiB
+This is a working desktop, not a benchmarking rig: other applications held 1.3-1.6 GiB in the recorded runs
 of VRAM and take GPU and CPU time. Baseline occupancy is recorded per run, and every
 comparison between two implementations is paired (§4) so that background load cannot
 masquerade as an effect.
@@ -63,7 +67,8 @@ These runs used the `sdpa_no_gqa` backend that preceded §4's decode path.
 **Prefill and decode move in opposite directions.** Prefill throughput *rises* to 2048
 tokens as the GPU fills, then falls as attention's quadratic term grows; decode falls
 throughout. A single "tokens per second" figure averages the two. Time to first token
-and a separately timed prefill pass agree to within 1% (209 ms against 2048/9903 =
+and a separately timed prefill pass agree to within about 1% from 2k to 16k tokens
+(6% at 128, where both are under 30 ms) - for example 209 ms against 2048/9903 =
 207 ms), which is the evidence that the timing harness measures what it claims.
 
 <img src="../figures/throughput_vs_context.png" width="49%"> <img src="../figures/memory_throughput_tradeoff.png" width="49%">
@@ -76,11 +81,12 @@ and a separately timed prefill pass agree to within 1% (209 ms against 2048/9903
 | int8 | 13.1 | 8303 MiB | -43% memory, -70% speed | LLM.int8()'s decomposition costs more than it saves |
 | fp32 | 2.2 | 29051 MiB | does not fit | the driver *paged* instead of raising OOM |
 
-**On Windows, running out of VRAM does not fail - it slows down sixty-fold.** fp32
+**On Windows, running out of VRAM does not fail - it slows down 20-60x.** fp32
 needs 29 GB on a 24 GB card. It loaded and ran at 2.2 tok/s, and at a 2048-token prompt
 0.67 tok/s with a 36-second time to first token. A harness that trusted the absence of
 an exception would have published that as fp32's speed. Every comparison here now flags
-cells that reach 97% of device memory rather than reporting them.
+cells that reach 97% of device memory rather than reporting them (the Phase 1-2 runs
+predate that check; the fp32 rows are identified as paging from their telemetry).
 
 **Fidelity** against bf16 - 1088 teacher-forced positions, 32 prompts, 64-token greedy
 continuations:
@@ -92,7 +98,7 @@ continuations:
 | nf4 | 0.889 | 1.047 | **0.120** | 0.875 | 0.00 | token 16 |
 
 Reference perplexity 12.54. Correcting the padding mask (section 8) doubled nf4's
-measured KL, from 0.058 to 0.120, and left the other rows within noise: the
+measured KL, from 0.058 *(diagnostic: the superseded run)* to 0.120, and left the other rows within noise: the
 contaminated comparison had understated how far nf4 departs from bf16.
 
 **nf4 is the least faithful, and exact-match rate is a poor metric.** fp16 and bf16 are
@@ -136,9 +142,10 @@ Decode tok/s, batch 1, Phase 7 medians.
 **The byte count explains the long-context slowdown.** At 16k the KV cache is only
 0.9 GB against 15.2 GB of weights, so an ideal decoder would lose ~6%. The measured loss
 is 56%. Under the *expanded* model the ceiling falls just as the measurement does, and
-the measurement holds a steady 68-80% of it at every context and batch size - the
-residual is a constant overhead (kernel launches and small ops at batch 1), not
-anything that grows with context. That is the diagnosis §4 acts on.
+the measurement holds 68-80% of it at every context and batch size, drifting down about
+ten points from 128 to 16k tokens. The byte count accounts for the large loss; the
+residual is mostly overhead that does not scale with context (kernel launches and small
+ops at batch 1), plus a smaller part that does. That is the diagnosis §4 acts on.
 
 **Prefill** reaches 42% of measured GEMM throughput at 128 tokens, 85% at 2048, and
 falls to 77% at 16k as attention's share of the work reaches 20%. **nf4** decodes at 27-34% of its bandwidth
@@ -173,14 +180,14 @@ The matmul computes attention scores in **float32**, and the first version did n
 followed transformers' eager attention and rounded scores to bf16. Qwen2.5's attention
 logits are large enough that bf16 - whose adjacent values are 2.0 apart near 500 -
 cannot place them within a softmax temperature of the right value. Against a
-float32-attention reference that version's KL averaged 0.09-0.14 nats with single steps
+float32-attention reference that version's KL *(diagnostic)* averaged 0.09-0.14 nats with single steps
 above 8 nats. The regression test uses two keys scoring 500.0 and 500.5, which bf16
 ties; it fails on the old code.
 
 ### Measuring it honestly
 
 The first attempt measured each backend as its own sweep. The baseline then came in at
-35.5 tok/s against Phase 1's 44.8 for the identical configuration - with other
+35.5 tok/s *(diagnostic, a deleted run)* against Phase 1's 44.8 for the identical configuration - with other
 applications busy, the desktop was simply slower that hour.
 [`src/benchmarks/interleaved.py`](../src/benchmarks/interleaved.py) instead loads the model
 once, switches backend in place, visits every cell in every round, alternates the order
@@ -191,14 +198,14 @@ once, switches backend in place, visits every cell in every round, alternates th
 | context | old tok/s | new tok/s | paired speed-up [min, max] | KL to fp32 ref, old / new |
 |---|---|---|---|---|
 | 128 | 43.0 | 43.5 | 1.01x [0.99, 1.06] | 6.8e-4 / 6.8e-4 |
-| 1024 | 39.7 | 41.3 | 1.03x [1.01, 1.05] | 6.2e-4 / 6.2e-4 |
+| 1024 | 39.7 | 41.3 | 1.03x [1.01, 1.05] | 6.1e-4 / 6.1e-4 |
 | 2048 | 38.3 | 39.1 | 1.02x [0.96, 1.09] | 1.6e-4 / 1.2e-4 |
-| 4096 | 32.5 | 37.8 | **1.17x** [1.10, 1.25] | 1.1e-4 / 9.3e-5 |
+| 4096 | 32.5 | 37.8 | **1.17x** [1.10, 1.24] | 1.1e-4 / 9.3e-5 |
 | 8192 | 26.7 | 37.4 | **1.37x** [1.35, 1.44] | 8.1e-5 / 1.4e-4 |
-| 16384 | 19.2 | 30.2 | **1.57x** [1.56, 1.59] | 1.2e-4 / 7.2e-5 |
+| 16384 | 19.1 | 30.2 | **1.57x** [1.56, 1.59] | 1.1e-4 / 7.2e-5 |
 
 KL is the mean next-token KL over 64 teacher-forced decode steps against a backend that
-does decode attention entirely in float32. Both paths sit at 1e-4 to 7e-4 nats, and
+does decode attention entirely in float32. Both paths sit between 7e-5 and 8e-4 nats, and
 their top-1 agreement with the reference is identical at every length.
 
 ![decode A/B](../figures/decode_backend_ab.png)
@@ -243,8 +250,8 @@ and 2/40 benign ones (5%).
 | 24 | 3.63 | 0.986 | 3.20 |
 | 27 | 3.66 | 0.984 | 3.11 |
 
-Separation is weak through layer 10, rises steeply from 12 to 18, and plateaus at
-*d* ≈ 3.6-3.8 from layer 18 to the output. The fitting split overstates separation
+Separation is weak through layer 10, rises steeply from 12 to 20, and plateaus at
+*d* ≈ 3.6-3.8 from layer 20 to the output. The fitting split overstates separation
 wherever the signal is weak - at layer 0 it doubles it (1.35 against 0.62) - which is
 what fitting 3584 dimensions to 70 examples per class does. Directions from neighbouring
 layers are related but not identical: cosine similarity to layer 20's is 0.35 at layer 16,
@@ -295,8 +302,8 @@ Harmful prompts, 80 per condition:
 
 With the direction removed the model complies, and coherently: completions keep the
 baseline's distinct-token ratio (0.92 against 0.93), and the independent judge scores
-them at 1.1-1.3 nats per token - above the 0.7-0.9 of the model's ordinary answers, far
-below the 2.2-2.7 of genuinely degenerate output (below). Harmful completions are scored
+them at 1.1-1.4 nats per token across layers 14-19 - above the 0.7-0.9 of the model's
+ordinary answers, far below the 2.2-2.7 of degenerate output. Harmful completions are scored
 and discarded; none is stored.
 
 ![necessity and sufficiency](../figures/intervention_overview.png)
@@ -305,11 +312,12 @@ and discarded; none is stored.
 
 ![observation vs intervention vs cost](../figures/intervention_layer_sweep.png)
 
-The layers where the direction best *separates* harmful from harmless prompts (Phase 5
-peak, 20-24) are not where removing it works best. A band at layers 14-19 removes
-refusal almost completely; at layers 21-24, ablation leaves 30-65% of refusals in place
-while costing 25-36% perplexity. Layer 16 - *d* = 2.2, well short of the peak - removes
-97.5% of refusals with **no measurable perplexity change**. Layer 0 is weakly separable
+Separation is not a reliable guide to where removal works. A band at layers 14-19
+removes refusal almost completely, although separation there is still rising (d =
+2.0-3.5). Among the best-separating layers (20-27, d = 3.6-3.8), the picture is mixed:
+at layers 21-24 ablation leaves 30-65% of refusals in place and costs 26-36%
+perplexity, while layer 27 removes most refusal (5%, +3.3%). Layer 16 - *d* = 2.2, well
+short of the peak - leaves only 2.5% of refusals with **no perplexity change**. Layer 0 is weakly separable
 (*d* = 0.62) and ablating it does nothing at all. How well a probe reads a feature is
 not how much the model relies on it.
 
@@ -336,13 +344,14 @@ criteria of Arditi et al. (2024), applied on the JailbreakBench held-out split o
    with it added exceeds the intact model's rate (2/30).
 
 Among eligible layers, the one leaving the least refusal on harmful prompts wins, ties
-going to the lower perplexity cost. Criterion 3 does real work: layers 0-12 pass the
-first two but induce refusal on only 2-5 of 30 prompts, so they are excluded. Layers 14
+going to the lower perplexity cost. Criterion 3 does real work: layers 0, 4, 10 and 12
+pass the first two (layer 8 fails on perplexity) but induce refusal on only 2-5 of 30
+prompts, so they are excluded. Layers 14
 and 16 pass all three; **layer 14** wins, with 0/30 refusals under ablation.
 
 On the bundled prompts, which played no part in the choice, layer 14 holds up:
 
-| layer 14 | harmful refusal | harmless refusal | fluency (distinct-token ratio) |
+| layer 14 | harmful refusal | harmless refusal | distinct-token ratio (harmful / harmless) |
 |---|---|---|---|
 | intact | 49/50 | 0/50 | 0.94 |
 | direction ablated | **0/50** | 0/50 | 0.92 |
@@ -356,13 +365,14 @@ so than with layer 20's direction, whose x2 completions the judge scores at 2.2-
 per token against 1.3-1.6 for layer 14's.
 
 An earlier version of this rule applied only criterion 2. It chose layer 27, whose added
-direction produced degenerate text ("I I I I...", distinct-token ratio 0.07) that the
+direction produced degenerate text ("I I I I...", distinct-token ratio 0.07 *(diagnostic:
+the superseded run)*) that the
 fluency metrics flagged and the substring refusal classifier alone would not have.
 Restoring the paper's other two criteria excludes it on both counts. Because that first
 run had already shown bundled-set results for every layer, the bundled set is not a
 fully untouched test of the corrected rule; the table above should be read as a check
 of it, not an out-of-sample validation. Every condition shared by the two runs
-reproduced exactly.
+reproduced exactly *(diagnostic: compared before the first run was removed)*.
 
 ---
 
@@ -371,8 +381,9 @@ reproduced exactly.
 The same two phases on `Qwen2.5-1.5B-Instruct` (28 layers, hidden size 1536), with
 the 7B model as the fluency judge. The configs differ from the 7B ones only in the model.
 
-**The behavioural contrast is weaker.** The 1.5B model refuses 100% of harmful prompts
-but also **40% of the JailbreakBench benign prompts** - which are deliberately
+**The behavioural contrast is weaker.** In the Phase 6 evaluation the 1.5B model refuses
+100% of harmful prompts but also **40% of the JailbreakBench benign prompts** (Phase 5's
+behaviour check, on a different sample: 97.5% and 47.5%) - which are deliberately
 topic-matched to the harmful ones - against 2% of the bundled benign prompts. It
 over-refuses borderline topics, so a direction fitted on the JBB contrast partly
 measures topic rather than refusal.
@@ -390,7 +401,7 @@ network: from ~1.0 at layer 10 to its plateau by layers 15-18 of 28.
 | harmful refusal, intact | 95% | 100% |
 | harmful refusal, random directions ablated | 95%, 95%, 95% | 100%, 98%, 99% |
 | harmful refusal, best no-cost ablation | 2.5% (layer 16, -0.5% ppl) | 19% (layer 16, +1.6% ppl) |
-| harmful refusal, best ablation at any cost | 0% (layer 14, +4.6% ppl) | 0% (layer 14, **+43% ppl**) |
+| harmful refusal, best ablation at any cost | 0% (layer 14, +4.6% ppl) | 0% (layer 19, **+27% ppl**) |
 | harmless refusal, intact | 3% | 16% |
 | harmless refusal, +1.0x direction | 31% | 76% |
 | harmless refusal, +2.0x direction | 100% | 100% |
@@ -398,11 +409,12 @@ network: from ~1.0 at layer 10 to its plateau by layers 15-18 of 28.
 
 Adding the direction induces refusal *more* readily at 1.5B, and random vectors of the
 same norm do nothing, so the direction is causally sufficient at both scales. Removing
-it is another matter. At 7B a band of layers removes refusal at no measurable cost. At
+it is another matter. At 7B, layer 16 removes refusal with no perplexity change. At
 1.5B, the best layer whose ablation keeps perplexity within 4% still leaves 19% of
 refusals in place, and the layers that reach 0-1% (14, 15, 19) raise perplexity by
 27-43%. For layer 14 the judge scores the resulting completions at 2.5-2.7 nats per
-token, against 0.5-0.9 for intact answers - degraded text, not fluent compliance. Here the automatic selection rule chose layer 16, which is the
+token, against 1.1-1.6 for the intact model's own answers to harmless prompts -
+degraded text, not fluent compliance. Here the automatic selection rule chose layer 16, which is the
 reasonable choice.
 
 A plausible reading, not tested here, is that the smaller model entangles refusal with
@@ -414,7 +426,7 @@ direction" holds cleanly at 7B and only partly at 1.5B.
 
 ## 8. Debugging highlights
 
-Each of these would have quietly corrupted results. None was found by reading code.
+Each of these would have quietly corrupted results or made the repository unusable.
 
 **Custom attention backends received no padding mask.** Transformers builds attention
 masks from a registry *separate* from the attention functions, and for a name missing
@@ -426,7 +438,7 @@ prompt-level metrics, Phase 5 and the behaviour check were re-run. The existing 
 called the attention function *with* a mask - a path the model never takes - and passed
 throughout.
 
-**bf16 attention scores cost up to 8 nats of KL.** The first grouped decode path looked
+**bf16 attention scores cost over 8 nats of KL on single steps.** The first grouped decode path looked
 fine on speed and on greedy output. The float32-reference fidelity check - built because
 exact-match comparisons had already proven meaningless in Phase 2 - showed it 100-1000x
 further from the reference than the kernel it replaced (§4).
@@ -458,10 +470,12 @@ logits. Details in [`PROGRESS.md`](../PROGRESS.md).
   still carry the machine's background load, which is why Phase 1 and Phase 7 differ by a
   few percent for the same configuration.
 * **`transformers.generate`, not a serving stack.** At batch 1, launch overhead holds
-  every configuration to ~75% of its bandwidth roofline; CUDA graphs or a compiled
+  the bf16 and fp16 configurations to 68-80% of their bandwidth roofline (quantized
+  modes sit far lower, limited by dequantisation); CUDA graphs or a compiled
   runtime would narrow that, and vLLM or TensorRT-LLM would be faster outright. The
   decode path in §4 is a fix for this stack on this platform. On a build with flash
-  attention, stock `sdpa` is the right choice and `auto` selects it.
+  attention, `auto` selects stock `sdpa`, which should be the better choice there; that
+  has not been tested on such a build.
 * **The refusal classifier is substring matching** over the first 200 characters, as in
   the original paper - a lower bound on refusal, and blind to degenerate output, which is
   why fluency is measured alongside it.
@@ -516,7 +530,7 @@ stalls indefinitely on large downloads (`pip` hung for 25 minutes on the torch w
 URLs.
 
 The CI workflow in `.github/workflows/tests.yml` runs ruff and the CPU suite against CPU
-torch on every push: ruff clean, 170 passed, 2 GPU-only tests deselected.
+torch on every push: ruff clean, 171 passed, 2 GPU-only tests deselected.
 
 ---
 

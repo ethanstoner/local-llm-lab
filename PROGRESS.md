@@ -606,4 +606,4 @@ The bundled set had been seen for every layer in the first run, so the corrected
 bundled result is reported as a check, not an out-of-sample validation.
 
 Also: CI actions bumped from checkout@v4 / setup-python@v5 to v7 (Node 20 deprecation).
-Tests: 169 -> 172.
+Tests: 169 -> 173.
