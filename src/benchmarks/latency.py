@@ -78,12 +78,26 @@ def measure_prefill(
     token is generated. It is measured with its own call rather than inferred from time
     to first token, and the two are reported side by side as a cross-check.
 
+    Only the final position's logits are requested. A plain forward pass computes logits
+    for *every* prompt position, which at a 16k context and a 152k vocabulary is a 5 GiB
+    tensor on top of the weights - enough to OOM a 24 GB card measuring a 7B model, and
+    an artifact of the measurement rather than a real cost. ``generate`` keeps one
+    position for the same reason, so this also makes the two comparable.
+
     Returns:
         Elapsed seconds.
     """
     sync(device)
     start = time.perf_counter()
-    model(**inputs, use_cache=True)
+    try:
+        model(**inputs, use_cache=True, logits_to_keep=1)
+    except TypeError:
+        # Older transformers spells it differently, or not at all.
+        try:
+            model(**inputs, use_cache=True, num_logits_to_keep=1)
+        except TypeError:
+            logger.debug("logits_to_keep unsupported; prefill will materialise all logits")
+            model(**inputs, use_cache=True)
     sync(device)
     return time.perf_counter() - start
 
