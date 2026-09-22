@@ -53,6 +53,13 @@ Invoke-Stage "Phase 1: context sweep" @("-m", "src.benchmarks.run", "--config", 
 Invoke-Stage "Phase 2: precision sweep" @("-m", "src.benchmarks.run", "--config", "configs/precision_sweep.yaml", "--device", $Device)
 Invoke-Stage "Phase 2: quality comparison" @("-m", "src.evaluation.run", "--config", "configs/precision_sweep.yaml", "--device", $Device)
 Invoke-Stage "Phases 4-5: refusal direction" @("-m", "src.interpretability.run", "--config", "configs/refusal.yaml", "--device", $Device)
+Invoke-Stage "Phase 6: causal test of the direction" @("-m", "src.interpretability.intervene", "--config", "configs/intervention.yaml", "--device", $Device)
+Invoke-Stage "Phase 5 on the 1.5B model" @("-m", "src.interpretability.run", "--config", "configs/refusal_1.5b.yaml", "--device", $Device)
+Invoke-Stage "Phase 6 on the 1.5B model" @("-m", "src.interpretability.intervene", "--config", "configs/intervention_1.5b.yaml", "--device", $Device)
+Invoke-Stage "Hardware ceilings" @("-m", "src.benchmarks.ceilings", "--device", $Device)
+Invoke-Stage "Phase 7: decode attention A/B" @("-m", "src.benchmarks.interleaved", "--config", "configs/decode_ab.yaml", "--device", $Device)
+Invoke-Stage "Phase 8: batch sweep" @("-m", "src.benchmarks.interleaved", "--config", "configs/batch_sweep.yaml", "--device", $Device)
+Invoke-Stage "Roofline analysis" @("-m", "src.analysis.roofline")
 Invoke-Stage "Figures" @("-m", "src.visualization.render")
 
 Write-Output ""

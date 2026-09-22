@@ -400,14 +400,18 @@ def set_attn_implementation(model: torch.nn.Module, name: str) -> None:
 def recommended_attn_implementation() -> str:
     """Pick the attention implementation that suits this build.
 
-    ``sdpa`` when a flash kernel exists, ``sdpa_no_gqa`` when it does not but the
-    memory-efficient kernel does, and ``sdpa`` as a last resort so behaviour matches
+    ``sdpa`` when a flash kernel exists, ``sdpa_grouped_decode`` when it does not but
+    the memory-efficient kernel does, and ``sdpa`` as a last resort so behaviour matches
     stock transformers on an unknown platform.
+
+    ``sdpa_grouped_decode`` replaced ``sdpa_no_gqa`` here after the Phase 7 paired A/B
+    (configs/decode_ab.yaml): never meaningfully slower, 1.57x faster at 16k context,
+    and within the same distance of a float32-attention reference at every length.
     """
     if flash_attention_available():
         return "sdpa"
     if memory_efficient_available():
-        return SDPA_NO_GQA
+        return SDPA_GROUPED_DECODE
     return "sdpa"
 
 

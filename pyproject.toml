@@ -21,7 +21,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest"]
+dev = ["pytest", "ruff"]
 
 # torch's CUDA build is not on PyPI; scripts/setup_env.ps1 installs it from the cu124 index
 # before resolving the rest. `pip install -e .` alone will not find torch==2.6.0+cu124.
